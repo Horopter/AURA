@@ -28,8 +28,9 @@ def aggressive_gc(clear_cuda: bool = True, threshold: int = 0) -> None:
         threshold: GC threshold (0 = collect all generations)
     """
     # Multiple passes of GC
+    # Note: gc.collect() doesn't accept threshold in Python < 3.10, so we don't use it
     for _ in range(3):
-        collected = gc.collect(threshold=threshold)
+        collected = gc.collect()
         if collected == 0:
             break
     

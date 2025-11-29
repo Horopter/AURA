@@ -203,7 +203,12 @@ def apply_simple_augmentation(
     
     if aug_type == 'rotation':
         angle = random.uniform(-15, 15)
-        pil_image = pil_image.rotate(angle, fill=0)
+        # Use fillcolor for older PIL versions, fill for newer ones
+        try:
+            pil_image = pil_image.rotate(angle, fill=0)
+        except TypeError:
+            # Fallback for older PIL versions
+            pil_image = pil_image.rotate(angle, fillcolor=0)
     elif aug_type == 'flip':
         if random.random() < 0.5:
             pil_image = pil_image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
