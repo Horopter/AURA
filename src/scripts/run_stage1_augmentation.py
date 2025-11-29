@@ -120,13 +120,21 @@ Examples:
     logger.info("Checking prerequisites...")
     logger.info("=" * 80)
     
-    # Check metadata file
-    metadata_path = project_root / "data" / "video_index_input.csv"
-    if not metadata_path.exists():
-        logger.error("Metadata file not found: %s", metadata_path)
+    # Check metadata file - prefer FVC_dup.csv, fallback to video_index_input.csv
+    metadata_path = None
+    for csv_name in ["FVC_dup.csv", "video_index_input.csv"]:
+        candidate_path = project_root / "data" / csv_name
+        if candidate_path.exists():
+            metadata_path = candidate_path
+            logger.info("✓ Metadata file found: %s", metadata_path)
+            break
+    
+    if metadata_path is None:
+        logger.error("Metadata file not found. Expected:")
+        logger.error("  - %s", project_root / "data" / "FVC_dup.csv")
+        logger.error("  - %s", project_root / "data" / "video_index_input.csv")
         logger.error("Please run data preparation first: python src/setup_fvc_dataset.py")
         return 1
-    logger.info("✓ Metadata file found: %s", metadata_path)
     
     # Check videos directory
     videos_dir = project_root / "videos"

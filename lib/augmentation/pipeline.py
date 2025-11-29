@@ -123,11 +123,18 @@ def stage1_augment_videos(
     output_dir = project_root / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Load metadata
+    # Load metadata - check for FVC_dup.csv first, then video_index_input.csv
     logger.info("Stage 1: Loading video metadata...")
-    input_metadata_path = project_root / "data" / "video_index_input.csv"
-    if not input_metadata_path.exists():
-        logger.error(f"Metadata file not found: {input_metadata_path}")
+    input_metadata_path = None
+    for csv_name in ["FVC_dup.csv", "video_index_input.csv"]:
+        candidate_path = project_root / "data" / csv_name
+        if candidate_path.exists():
+            input_metadata_path = candidate_path
+            logger.info(f"Using metadata file: {input_metadata_path}")
+            break
+    
+    if input_metadata_path is None:
+        logger.error(f"Metadata file not found. Expected: {project_root / 'data' / 'FVC_dup.csv'} or {project_root / 'data' / 'video_index_input.csv'}")
         return pl.DataFrame()
     
     df = load_metadata(str(input_metadata_path))

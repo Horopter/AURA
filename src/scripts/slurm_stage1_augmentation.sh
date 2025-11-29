@@ -15,8 +15,8 @@
 #SBATCH --account=eecs442f25_class
 #SBATCH --partition=gpu
 #SBATCH --gpus=0  # Augmentation doesn't need GPU
-#SBATCH --time=4:00:00
-#SBATCH --mem=80G
+#SBATCH --time=8:00:00  # Increased time for 10 augmentations per video
+#SBATCH --mem=32G  # Reduced from 80G - augmentation is not RAM intensive
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/stage1_aug-%j.out
 #SBATCH --error=logs/stage1_aug-%j.err
@@ -38,10 +38,11 @@ unset MallocStackLoggingNoCompact || true
 # Suppress Python warnings
 export PYTHONWARNINGS="ignore::UserWarning,ignore::DeprecationWarning,ignore::FutureWarning"
 
-# Set extreme conservative memory settings
+# Memory settings - augmentation is not RAM intensive, so we can be more relaxed
+# But keep conservative for compatibility
 if [ -z "${FVC_FIXED_SIZE:-}" ]; then
     export FVC_FIXED_SIZE=112
-    echo "Using extreme conservative resolution: FVC_FIXED_SIZE=112 (112x112)" >&2
+    echo "Using conservative resolution: FVC_FIXED_SIZE=112 (112x112)" >&2
 fi
 
 # ============================================================================
@@ -154,14 +155,19 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     exit 1
 fi
 
-# Verify data files
-DATA_CSV="$ORIG_DIR/data/video_index_input.csv"
-if [ ! -f "$DATA_CSV" ]; then
-    log "✗ ERROR: Data CSV not found: $DATA_CSV"
+# Verify data files - check for FVC_dup.csv first, then video_index_input.csv
+DATA_CSV=""
+if [ -f "$ORIG_DIR/data/FVC_dup.csv" ]; then
+    DATA_CSV="$ORIG_DIR/data/FVC_dup.csv"
+    log "✓ Using FVC_dup.csv: $DATA_CSV"
+elif [ -f "$ORIG_DIR/data/video_index_input.csv" ]; then
+    DATA_CSV="$ORIG_DIR/data/video_index_input.csv"
+    log "✓ Using video_index_input.csv: $DATA_CSV"
+else
+    log "✗ ERROR: No data CSV found"
+    log "  Expected: $ORIG_DIR/data/FVC_dup.csv or $ORIG_DIR/data/video_index_input.csv"
     log "  Run setup script first: python src/setup_fvc_dataset.py"
     exit 1
-else
-    log "✓ Data CSV found: $DATA_CSV"
 fi
 
 log "✅ All prerequisites verified"
@@ -175,6 +181,7 @@ log "Starting Stage 1: Video Augmentation"
 log "=========================================="
 
 # Get number of augmentations from environment or use default
+# Default to 10 augmentations per video for FVC_dup.csv
 NUM_AUGMENTATIONS="${FVC_NUM_AUGMENTATIONS:-10}"
 log "Number of augmentations per video: $NUM_AUGMENTATIONS"
 

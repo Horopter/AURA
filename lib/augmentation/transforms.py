@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from torchvision import transforms
 from torchvision.transforms import functional as F_transforms
-from PIL import Image
+from PIL import Image, ImageFilter
 
 logger = logging.getLogger(__name__)
 
