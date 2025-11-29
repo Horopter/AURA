@@ -15,8 +15,8 @@
 #SBATCH --account=eecs442f25_class
 #SBATCH --partition=gpu
 #SBATCH --gpus=0  # Augmentation doesn't need GPU
-#SBATCH --time=8:00:00  # Increased time for 10 augmentations per video
-#SBATCH --mem=32G  # Reduced from 80G - augmentation is not RAM intensive
+#SBATCH --time=8:00:00
+#SBATCH --mem=80G
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/stage1_aug-%j.out
 #SBATCH --error=logs/stage1_aug-%j.err
@@ -38,11 +38,14 @@ unset MallocStackLoggingNoCompact || true
 # Suppress Python warnings
 export PYTHONWARNINGS="ignore::UserWarning,ignore::DeprecationWarning,ignore::FutureWarning"
 
-# Memory settings - augmentation is not RAM intensive, so we can be more relaxed
-# But keep conservative for compatibility
+# Set extreme conservative memory settings
+# Default fixed_size to 112x112 for maximum memory efficiency
+# User can override by setting FVC_FIXED_SIZE in their environment
 if [ -z "${FVC_FIXED_SIZE:-}" ]; then
     export FVC_FIXED_SIZE=112
-    echo "Using conservative resolution: FVC_FIXED_SIZE=112 (112x112)" >&2
+    echo "Using extreme conservative resolution: FVC_FIXED_SIZE=112 (112x112)" >&2
+else
+    echo "Using custom resolution: FVC_FIXED_SIZE=${FVC_FIXED_SIZE}" >&2
 fi
 
 # ============================================================================
