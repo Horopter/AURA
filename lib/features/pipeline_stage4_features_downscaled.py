@@ -22,9 +22,9 @@ from .handcrafted_features import (
     extract_blur_sharpness,
     extract_boundary_inconsistency
 )
-from .video_paths import resolve_video_path
-from .video_modeling import _read_video_wrapper, uniform_sample_indices
-from .mlops_utils import aggressive_gc, log_memory_stats
+from ..video_paths import resolve_video_path
+from ..video_modeling import _read_video_wrapper, uniform_sample_indices
+from ..utils.mlops_utils import aggressive_gc, log_memory_stats
 
 logger = logging.getLogger(__name__)
 

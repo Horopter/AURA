@@ -17,9 +17,9 @@ from typing import List, Optional
 import polars as pl
 import av
 
-from .video_data import load_metadata, filter_existing_videos
-from .video_paths import resolve_video_path
-from .mlops_utils import aggressive_gc, log_memory_stats
+from ..video_data import load_metadata, filter_existing_videos
+from ..video_paths import resolve_video_path
+from ..utils.mlops_utils import aggressive_gc, log_memory_stats
 
 logger = logging.getLogger(__name__)
 

@@ -15,7 +15,10 @@ from typing import Dict, Any, List
 import torch
 import torch.nn as nn
 
-from .mlops_core import RunConfig
+# Import RunConfig - using TYPE_CHECKING to avoid circular import at runtime
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from ..mlops.mlops_core import RunConfig
 
 logger = logging.getLogger(__name__)
 

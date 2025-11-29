@@ -25,7 +25,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-from .video_data import stratified_kfold
+from ..video_data import stratified_kfold
 from .baseline_models import LogisticRegressionBaseline, SVMBaseline
 from .model_factory import create_model, get_model_config, is_pytorch_model
 from .video_training import (
@@ -33,15 +33,15 @@ from .video_training import (
     OptimConfig,
     TrainConfig
 )
-from .mlops_pipeline import fit_with_tracking
-from .video_metrics import (
+from ..mlops.mlops_pipeline import fit_with_tracking
+from ..video_metrics import (
     collect_logits_and_labels,
     basic_classification_metrics,
     confusion_matrix,
     roc_auc
 )
-from .mlops_core import ExperimentTracker, CheckpointManager, create_run_directory
-from .mlops_utils import aggressive_gc, log_memory_stats, safe_execute
+from ..mlops.mlops_core import ExperimentTracker, CheckpointManager, create_run_directory
+from ..utils.mlops_utils import aggressive_gc, log_memory_stats, safe_execute
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ def stage5_train_models(
     
     # Create experiment tracker for Stage 5 (if tracking enabled)
     if use_tracking:
-        from .mlops_core import create_run_directory
+        from ..mlops.mlops_core import create_run_directory
         run_dir, run_id = create_run_directory(str(output_dir), "stage5_training")
         stage5_tracker = ExperimentTracker(str(run_dir), run_id)
         logger.info(f"Stage 5: Run ID: {run_id}")

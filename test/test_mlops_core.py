@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import polars as pl
-from lib.mlops_core import (
+from lib.mlops.mlops_core import (
     RunConfig,
     ExperimentTracker,
     CheckpointManager,

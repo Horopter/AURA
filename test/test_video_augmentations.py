@@ -3,7 +3,7 @@ import pytest
 import numpy as np
 from PIL import Image
 import torch
-from lib.video_augmentations import (
+from lib.augmentation.video_augmentations import (
     RandomRotation,
     RandomAffine,
     RandomGaussianNoise,

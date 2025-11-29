@@ -24,26 +24,25 @@ from .mlops_core import (
     RunConfig, ExperimentTracker, CheckpointManager, 
     DataVersionManager, create_run_directory
 )
-from .mlops_utils import (
+from ..utils.mlops_utils import (
     aggressive_gc, check_oom_error, handle_oom_error, 
     safe_execute, log_memory_stats
 )
 from .mlops_pipeline import (
     PipelineStage, MLOpsPipeline, fit_with_tracking
 )
-from .video_data import (
+from ..video_data import (
     load_metadata,
     filter_existing_videos,
     stratified_kfold,
     make_balanced_batch_sampler,
     maybe_limit_to_small_test_subset,
 )
-from .video_modeling import VideoConfig, VideoDataset, variable_ar_collate
-
-from .video_augmentation_pipeline import pregenerate_augmented_dataset
-from .video_training import OptimConfig, TrainConfig
-from .video_metrics import collect_logits_and_labels, basic_classification_metrics
-from .model_factory import create_model, get_model_config, is_pytorch_model, download_pretrained_models
+from ..video_modeling import VideoConfig, VideoDataset, variable_ar_collate
+from ..augmentation.video_augmentation_pipeline import pregenerate_augmented_dataset
+from ..training.video_training import OptimConfig, TrainConfig
+from ..video_metrics import collect_logits_and_labels, basic_classification_metrics
+from ..training.model_factory import create_model, get_model_config, is_pytorch_model, download_pretrained_models
 
 from torch.utils.data import DataLoader
 

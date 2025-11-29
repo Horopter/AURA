@@ -22,11 +22,11 @@ from .mlops_core import (
     RunConfig, ExperimentTracker, CheckpointManager, 
     DataVersionManager, create_run_directory
 )
-from .mlops_utils import (
+from ..utils.mlops_utils import (
     aggressive_gc, check_oom_error, handle_oom_error, 
     safe_execute, log_memory_stats
 )
-from .video_data import (
+from ..video_data import (
     load_metadata,
     filter_existing_videos,
     train_val_test_split,
@@ -34,10 +34,9 @@ from .video_data import (
     stratified_kfold,
     maybe_limit_to_small_test_subset,
 )
-from .video_modeling import VideoConfig, VideoDataset, variable_ar_collate
-from .video_augmentation_pipeline import pregenerate_augmented_dataset
-from .video_training import OptimConfig, TrainConfig
-from .video_modeling import PretrainedInceptionVideoModel
+from ..video_modeling import VideoConfig, VideoDataset, variable_ar_collate, PretrainedInceptionVideoModel
+from ..augmentation.video_augmentation_pipeline import pregenerate_augmented_dataset
+from ..training.video_training import OptimConfig, TrainConfig
 from torch.utils.data import DataLoader
 
 logger = logging.getLogger(__name__)
@@ -453,7 +452,7 @@ def fit_with_tracking(
     ckpt_manager: CheckpointManager,
 ) -> torch.nn.Module:
     """Enhanced fit function with experiment tracking and aggressive GC."""
-    from .video_training import train_one_epoch, evaluate, build_optimizer, build_scheduler
+    from ..training.video_training import train_one_epoch, evaluate, build_optimizer, build_scheduler
     
     device = train_cfg.device
     model.to(device)

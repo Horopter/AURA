@@ -19,7 +19,7 @@ from sklearn.svm import LinearSVC
 from sklearn.preprocessing import StandardScaler
 import joblib
 
-from .handcrafted_features import HandcraftedFeatureExtractor
+from ..features.handcrafted_features import HandcraftedFeatureExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class LogisticRegressionBaseline:
         labels = df["label"].to_list()
         
         # Extract features (extreme conservative batch size for OOM safety)
-        from .mlops_utils import aggressive_gc
+        from ..utils.mlops_utils import aggressive_gc
         features = self.feature_extractor.extract_batch(
             video_paths,
             project_root,
@@ -97,7 +97,7 @@ class LogisticRegressionBaseline:
         video_paths = df["video_path"].to_list()
         
         # Extract features (extreme conservative batch size for OOM safety)
-        from .mlops_utils import aggressive_gc
+        from ..utils.mlops_utils import aggressive_gc
         features = self.feature_extractor.extract_batch(
             video_paths,
             project_root,
@@ -162,7 +162,7 @@ class SVMBaseline:
         labels = df["label"].to_list()
         
         # Extract features (extreme conservative batch size for OOM safety)
-        from .mlops_utils import aggressive_gc
+        from ..utils.mlops_utils import aggressive_gc
         features = self.feature_extractor.extract_batch(
             video_paths,
             project_root,

@@ -17,25 +17,23 @@ from .mlops_core import (
     RunConfig, ExperimentTracker, CheckpointManager, 
     DataVersionManager, create_run_directory
 )
-from .mlops_utils import (
+from ..utils.mlops_utils import (
     aggressive_gc, check_oom_error, handle_oom_error, 
     safe_execute, log_memory_stats
 )
 from .mlops_pipeline import (
     PipelineStage, MLOpsPipeline, fit_with_tracking
 )
-from .video_data import (
+from ..video_data import (
     load_metadata,
     filter_existing_videos,
     stratified_kfold,
     maybe_limit_to_small_test_subset,
 )
-from .video_modeling import VideoConfig, VideoDataset, variable_ar_collate
-
-from .video_augmentation_pipeline import pregenerate_augmented_dataset
-from .video_training import OptimConfig, TrainConfig
-from .video_modeling import PretrainedInceptionVideoModel
-from .video_metrics import collect_logits_and_labels, basic_classification_metrics
+from ..video_modeling import VideoConfig, VideoDataset, variable_ar_collate, PretrainedInceptionVideoModel
+from ..augmentation.video_augmentation_pipeline import pregenerate_augmented_dataset
+from ..training.video_training import OptimConfig, TrainConfig
+from ..video_metrics import collect_logits_and_labels, basic_classification_metrics
 from torch.utils.data import DataLoader
 
 logger = logging.getLogger(__name__)
@@ -232,7 +230,7 @@ def build_kfold_pipeline(config: RunConfig, tracker: ExperimentTracker,
                 val_ds = VideoDataset(val_df, config.project_root, config=video_cfg, train=False)
                 
                 # Create loaders
-                from .video_data import make_balanced_batch_sampler
+                from ..video_data import make_balanced_batch_sampler
                 
                 # For CPU-only runs or when memory is constrained, use num_workers=0
                 # to avoid multiprocessing overhead and OOM from worker processes

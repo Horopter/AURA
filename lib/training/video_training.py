@@ -21,7 +21,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler, StepLR
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
-from .video_modeling import VariableARVideoModel
+from ..video_modeling import VariableARVideoModel
 
 
 logger = logging.getLogger(__name__)
@@ -471,7 +471,7 @@ def train_one_epoch(
                     optimizer.step()
                 
                 # Ultra aggressive GC after optimizer step to free memory immediately
-                from .mlops_utils import aggressive_gc
+                from ..utils.mlops_utils import aggressive_gc
                 aggressive_gc(clear_cuda=device.startswith("cuda"))
         except RuntimeError as e:
             error_str = str(e).lower()
@@ -480,7 +480,7 @@ def train_one_epoch(
                 logger.error("CUDA OOM at batch %d. Performing ultra aggressive cleanup...", batch_idx + 1)
                 
                 # Use ultra aggressive GC from mlops_utils
-                from .mlops_utils import aggressive_gc
+                from ..utils.mlops_utils import aggressive_gc
                 aggressive_gc(clear_cuda=True)
                 
                 # Log memory stats

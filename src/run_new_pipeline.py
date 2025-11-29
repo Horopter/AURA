@@ -21,11 +21,10 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from lib.pipeline_stage1_augmentation import stage1_augment_videos
-from lib.pipeline_stage2_features import stage2_extract_features
-from lib.pipeline_stage3_downscale import stage3_downscale_videos
-from lib.pipeline_stage4_features_downscaled import stage4_extract_downscaled_features
-from lib.pipeline_stage5_training import stage5_train_models
+from lib.augmentation import stage1_augment_videos
+from lib.features import stage2_extract_features, stage4_extract_downscaled_features
+from lib.downscaling import stage3_downscale_videos
+from lib.training import stage5_train_models
 
 logging.basicConfig(
     level=logging.INFO,

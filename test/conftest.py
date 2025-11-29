@@ -64,7 +64,7 @@ def sample_video_df_with_dups():
 @pytest.fixture
 def sample_run_config():
     """Create a sample RunConfig for testing."""
-    from lib.mlops_core import RunConfig
+    from lib.mlops.mlops_core import RunConfig
     
     return RunConfig(
         run_id="test_run_123",

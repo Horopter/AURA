@@ -26,12 +26,12 @@ logger = logging.getLogger("mlops_runner")
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from lib.mlops_core import RunConfig, ExperimentTracker, create_run_directory
-from lib.mlops_pipeline import build_mlops_pipeline
-from lib.mlops_pipeline_kfold import build_kfold_pipeline
-from lib.mlops_pipeline_multimodel import build_multimodel_pipeline
-from lib.cleanup_utils import cleanup_runs_and_logs
-from lib.model_factory import list_available_models
+from lib.mlops import (
+    RunConfig, ExperimentTracker, create_run_directory,
+    build_mlops_pipeline, build_kfold_pipeline, build_multimodel_pipeline,
+    cleanup_runs_and_logs
+)
+from lib.training import list_available_models
 
 
 def main():
@@ -148,7 +148,7 @@ def main():
         n_splits = 5
         
         # Create checkpoint manager for pipeline-level checkpointing
-        from lib.mlops_core import CheckpointManager
+        from lib.mlops import CheckpointManager
         checkpoint_dir = os.path.join(run_dir, "checkpoints")
         ckpt_manager = CheckpointManager(checkpoint_dir, run_id)
         
