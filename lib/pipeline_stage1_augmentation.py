@@ -8,8 +8,6 @@ Output: 11N videos (N original + 10N augmented)
 
 from __future__ import annotations
 
-import os
-import sys
 import logging
 import hashlib
 import random
