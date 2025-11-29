@@ -29,7 +29,6 @@ from .video_data import stratified_kfold
 from .baseline_models import LogisticRegressionBaseline, SVMBaseline
 from .model_factory import create_model, get_model_config, is_pytorch_model
 from .video_training import (
-    fit_with_tracking,
     train_one_epoch,
     evaluate,
     build_optimizer,
@@ -38,6 +37,7 @@ from .video_training import (
     TrainConfig,
     EarlyStopping
 )
+from .mlops_pipeline import fit_with_tracking
 from .video_metrics import (
     collect_logits_and_labels,
     basic_classification_metrics,
