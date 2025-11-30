@@ -11,6 +11,8 @@ import logging
 import hashlib
 import random
 import csv
+import shutil
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 import numpy as np
@@ -20,7 +22,7 @@ import av
 from lib.data import load_metadata, filter_existing_videos
 from lib.utils.paths import resolve_video_path
 from lib.utils.memory import aggressive_gc, log_memory_stats
-from .io import load_frames, save_frames
+from .io import load_frames, save_frames, concatenate_videos
 from .transforms import apply_simple_augmentation
 
 logger = logging.getLogger(__name__)
@@ -31,10 +33,15 @@ def augment_video(
     num_augmentations: int = 10,
     augmentation_types: Optional[List[str]] = None,
     max_frames: Optional[int] = 1000,
-    chunk_size: int = 1000
+    chunk_size: int = 1000,
+    checkpoint_dir: Optional[Path] = None,
+    resume: bool = True
 ) -> List[List[np.ndarray]]:
     """
     Generate augmented versions of a video, processing in chunks to handle long videos.
+    
+    Processes videos in chunks of 1000 frames, saves intermediate checkpoints, and stitches
+    them together. Supports resuming from checkpoints if processing is interrupted.
     
     Args:
         video_path: Path to video file
@@ -42,6 +49,8 @@ def augment_video(
         augmentation_types: List of augmentation types to use
         max_frames: Maximum frames to load per chunk (default: 1000)
         chunk_size: Number of frames to process per chunk (default: 1000)
+        checkpoint_dir: Directory to save intermediate chunk files (None = use temp dir)
+        resume: If True and checkpoint_dir is set, resume from existing checkpoints
     
     Returns:
         List of augmented frame sequences (one per augmentation)
@@ -113,61 +122,198 @@ def augment_video(
         random.seed(base_seed)
         random.shuffle(selected_types[:len(augmentation_types)])
     
-    # Initialize augmented videos (one list per augmentation)
-    augmented_videos = [[] for _ in range(num_augmentations)]
-    
-    # Process video in chunks
+    # Process video in chunks, saving intermediates and stitching at the end
     num_chunks = (total_frames + chunk_size - 1) // chunk_size  # Ceiling division
     logger.info(f"Processing {num_chunks} chunk(s)")
     
-    for chunk_idx in range(num_chunks):
-        start_frame = chunk_idx * chunk_size
-        end_frame = min(start_frame + chunk_size, total_frames)
-        frames_in_chunk = end_frame - start_frame
+    # Create checkpoint directory for intermediate chunk files
+    if checkpoint_dir is None:
+        # Use temp directory if no checkpoint dir specified
+        temp_dir = Path(tempfile.mkdtemp(prefix="aug_chunks_"))
+        use_checkpoints = False
+    else:
+        # Use persistent checkpoint directory
+        temp_dir = checkpoint_dir
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        use_checkpoints = True
+    
+    logger.debug(f"Using {'checkpoint' if use_checkpoints else 'temporary'} directory for chunks: {temp_dir}")
+    
+    try:
+        # Store intermediate file paths for each augmentation
+        intermediate_files = [[] for _ in range(num_augmentations)]
         
-        logger.info(f"Processing chunk {chunk_idx + 1}/{num_chunks} (frames {start_frame}-{end_frame-1})")
-        
-        # Load chunk
-        chunk_frames, chunk_fps = load_frames(video_path, max_frames=chunk_size, start_frame=start_frame)
-        
-        if not chunk_frames:
-            logger.warning(f"No frames loaded for chunk {chunk_idx + 1}, skipping")
-            continue
-        
-        if len(chunk_frames) != frames_in_chunk:
-            logger.warning(f"Expected {frames_in_chunk} frames, got {len(chunk_frames)}")
-        
-        # Augment each chunk
-        for aug_idx in range(num_augmentations):
-            aug_seed = base_seed + aug_idx + (chunk_idx * 1000)  # Different seed per chunk
-            random.seed(aug_seed)
-            np.random.seed(aug_seed)
+        # Check for existing checkpoints if resuming
+        if resume and use_checkpoints:
+            logger.info("Checking for existing checkpoints...")
+            for aug_idx in range(num_augmentations):
+                for chunk_idx in range(num_chunks):
+                    checkpoint_path = temp_dir / f"chunk_{chunk_idx}_aug_{aug_idx}.mp4"
+                    if checkpoint_path.exists():
+                        intermediate_files[aug_idx].append(str(checkpoint_path))
+                        logger.debug(f"Found checkpoint: chunk {chunk_idx + 1} for augmentation {aug_idx + 1}")
             
-            # Use pre-selected augmentation type
-            aug_type = selected_types[aug_idx]
+            # Sort by chunk index to ensure correct order
+            for aug_idx in range(num_augmentations):
+                intermediate_files[aug_idx].sort(key=lambda x: int(Path(x).stem.split('_')[1]))
             
-            # Apply augmentation to all frames in chunk
-            augmented_chunk = []
-            for frame_idx, frame in enumerate(chunk_frames):
-                augmented_frame = apply_simple_augmentation(frame, aug_type, aug_seed + frame_idx)
-                augmented_chunk.append(augmented_frame)
+            # Determine which chunks are already complete
+            completed_augmentations = set()
+            for aug_idx in range(num_augmentations):
+                if len(intermediate_files[aug_idx]) == num_chunks:
+                    # All chunks complete for this augmentation
+                    completed_augmentations.add(aug_idx)
+            
+            if completed_augmentations:
+                logger.info(f"Found complete checkpoints for {len(completed_augmentations)} augmentation(s), will skip processing")
+            elif any(len(files) > 0 for files in intermediate_files):
+                max_completed_chunk = max(
+                    (int(Path(f).stem.split('_')[1]) for files in intermediate_files for f in files if f),
+                    default=-1
+                )
+                if max_completed_chunk >= 0:
+                    logger.info(f"Resuming from chunk {max_completed_chunk + 2}/{num_chunks}")
+        
+        # Process chunks that haven't been checkpointed
+        for chunk_idx in range(num_chunks):
+            start_frame = chunk_idx * chunk_size
+            end_frame = min(start_frame + chunk_size, total_frames)
+            frames_in_chunk = end_frame - start_frame
+            
+            # Check if this chunk is already complete for all augmentations
+            chunk_complete = True
+            for aug_idx in range(num_augmentations):
+                checkpoint_path = temp_dir / f"chunk_{chunk_idx}_aug_{aug_idx}.mp4"
+                if not checkpoint_path.exists():
+                    chunk_complete = False
+                    break
+            
+            if chunk_complete and resume:
+                logger.info(f"Chunk {chunk_idx + 1}/{num_chunks} already checkpointed, skipping...")
+                # Ensure it's in intermediate_files (sorted by chunk index)
+                for aug_idx in range(num_augmentations):
+                    checkpoint_path = temp_dir / f"chunk_{chunk_idx}_aug_{aug_idx}.mp4"
+                    checkpoint_str = str(checkpoint_path)
+                    if checkpoint_str not in intermediate_files[aug_idx]:
+                        # Insert in sorted order
+                        intermediate_files[aug_idx].append(checkpoint_str)
+                        intermediate_files[aug_idx].sort(key=lambda x: int(Path(x).stem.split('_')[1]))
+                continue
+            
+            logger.info(f"Processing chunk {chunk_idx + 1}/{num_chunks} (frames {start_frame}-{end_frame-1})")
+            
+            # Load chunk
+            chunk_frames, chunk_fps = load_frames(video_path, max_frames=chunk_size, start_frame=start_frame)
+            
+            if not chunk_frames:
+                logger.warning(f"No frames loaded for chunk {chunk_idx + 1}, skipping")
+                continue
+            
+            if len(chunk_frames) != frames_in_chunk:
+                logger.warning(f"Expected {frames_in_chunk} frames, got {len(chunk_frames)}")
+            
+            # Augment each chunk and save to intermediate file
+            for aug_idx in range(num_augmentations):
+                aug_seed = base_seed + aug_idx + (chunk_idx * 1000)  # Different seed per chunk
+                random.seed(aug_seed)
+                np.random.seed(aug_seed)
                 
-                # Aggressive GC every 100 frames
-                if (frame_idx + 1) % 100 == 0:
-                    aggressive_gc(clear_cuda=False)
+                # Use pre-selected augmentation type
+                aug_type = selected_types[aug_idx]
+                
+                # Apply augmentation to all frames in chunk
+                augmented_chunk = []
+                for frame_idx, frame in enumerate(chunk_frames):
+                    augmented_frame = apply_simple_augmentation(frame, aug_type, aug_seed + frame_idx)
+                    augmented_chunk.append(augmented_frame)
+                    
+                    # Aggressive GC every 100 frames
+                    if (frame_idx + 1) % 100 == 0:
+                        aggressive_gc(clear_cuda=False)
+                
+                # Save chunk to intermediate file (checkpoint)
+                intermediate_path = temp_dir / f"chunk_{chunk_idx}_aug_{aug_idx}.mp4"
+                if save_frames(augmented_chunk, str(intermediate_path), fps=chunk_fps):
+                    # Add to list in sorted order
+                    checkpoint_str = str(intermediate_path)
+                    if checkpoint_str not in intermediate_files[aug_idx]:
+                        intermediate_files[aug_idx].append(checkpoint_str)
+                        intermediate_files[aug_idx].sort(key=lambda x: int(Path(x).stem.split('_')[1]))
+                    logger.info(f"Chunk {chunk_idx + 1}: Checkpointed augmentation {aug_idx + 1}/{num_augmentations} with type '{aug_type}' ({len(augmented_chunk)} frames)")
+                else:
+                    logger.error(f"Failed to save intermediate chunk {chunk_idx + 1} for augmentation {aug_idx + 1}")
+                
+                del augmented_chunk
+                aggressive_gc(clear_cuda=False)
             
-            # Append chunk to the corresponding augmentation
-            augmented_videos[aug_idx].extend(augmented_chunk)
-            logger.debug(f"Chunk {chunk_idx + 1}: Generated augmentation {aug_idx + 1}/{num_augmentations} with type '{aug_type}' ({len(augmented_chunk)} frames)")
-            
-            del augmented_chunk
+            del chunk_frames
             aggressive_gc(clear_cuda=False)
         
-        del chunk_frames
-        aggressive_gc(clear_cuda=False)
-    
-    logger.info(f"Completed augmentation: {[len(frames) for frames in augmented_videos]} frames per augmentation")
-    return augmented_videos
+        # Stitch all intermediate files together for each augmentation
+        logger.info("Stitching intermediate chunks together...")
+        augmented_videos = []
+        
+        for aug_idx in range(num_augmentations):
+            if not intermediate_files[aug_idx]:
+                logger.warning(f"No intermediate files for augmentation {aug_idx + 1}, skipping")
+                augmented_videos.append([])
+                continue
+            
+            # Create stitched video file from intermediate chunks
+            stitched_video_path = temp_dir / f"stitched_aug_{aug_idx}.mp4"
+            if concatenate_videos(intermediate_files[aug_idx], str(stitched_video_path), fps=fps):
+                logger.info(f"Stitched augmentation {aug_idx + 1}/{num_augmentations} from {len(intermediate_files[aug_idx])} chunks")
+                
+                # Load the stitched video to return frames (required by API)
+                stitched_frames, _ = load_frames(str(stitched_video_path), max_frames=None)
+                augmented_videos.append(stitched_frames)
+                logger.info(f"Loaded stitched augmentation {aug_idx + 1}: {len(stitched_frames)} total frames")
+                
+                # Delete stitched video file (we have frames in memory now)
+                try:
+                    stitched_video_path.unlink()
+                except Exception as e:
+                    logger.debug(f"Could not delete stitched video: {e}")
+            else:
+                logger.error(f"Failed to stitch augmentation {aug_idx + 1}")
+                augmented_videos.append([])
+        
+        # Clean up intermediate chunk files after successful stitching
+        if use_checkpoints:
+            logger.info("Cleaning up checkpoint files after successful stitching...")
+            try:
+                # Only delete if we successfully created all augmentations
+                if all(len(frames) > 0 for frames in augmented_videos):
+                    shutil.rmtree(temp_dir)
+                    logger.debug(f"Deleted checkpoint directory: {temp_dir}")
+                else:
+                    logger.warning("Some augmentations failed, keeping checkpoints for resume")
+            except Exception as e:
+                logger.warning(f"Failed to delete checkpoint directory {temp_dir}: {e}")
+        else:
+            # Always clean up temp directory
+            logger.info("Cleaning up temporary chunk files...")
+            try:
+                shutil.rmtree(temp_dir)
+                logger.debug(f"Deleted temporary directory: {temp_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary directory {temp_dir}: {e}")
+        
+        logger.info(f"Completed augmentation: {[len(frames) for frames in augmented_videos]} frames per augmentation")
+        return augmented_videos
+        
+    except Exception as e:
+        logger.error(f"Error during chunked processing: {e}", exc_info=True)
+        # Only clean up temp directory on error, keep checkpoints for resume
+        if not use_checkpoints:
+            try:
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir)
+            except Exception:
+                pass
+        else:
+            logger.info("Checkpoints preserved for resume. Fix errors and re-run to continue.")
+        return []
 
 
 def _reconstruct_metadata_from_files(
@@ -573,10 +719,17 @@ def stage1_augment_videos(
             # Generate augmentations with chunked processing
             # Process in chunks of 1000 frames to handle long videos without losing data
             chunk_size = 1000
+            
+            # Create checkpoint directory for this video (persistent, can resume)
+            checkpoint_dir = output_dir / ".checkpoints" / video_id
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            
             augmented_videos = augment_video(
                 video_path, 
                 num_augmentations=num_augmentations,
-                chunk_size=chunk_size
+                chunk_size=chunk_size,
+                checkpoint_dir=checkpoint_dir,
+                resume=not delete_existing  # Resume if not deleting existing
             )
             
             # Get FPS from original video
@@ -634,6 +787,17 @@ def stage1_augment_videos(
                     continue
                 
                 success = save_frames(aug_frames, str(aug_path), fps=fps)
+                
+                # Clean up checkpoint directory after successful save of all augmentations
+                if success and aug_idx == len(augmented_videos) - 1:
+                    # Last augmentation saved successfully, clean up checkpoints
+                    checkpoint_dir = output_dir / ".checkpoints" / video_id
+                    if checkpoint_dir.exists():
+                        try:
+                            shutil.rmtree(checkpoint_dir)
+                            logger.debug(f"Cleaned up checkpoint directory for {video_id}")
+                        except Exception as e:
+                            logger.debug(f"Could not clean up checkpoint directory: {e}")
                 
                 if success:
                     aug_path_rel = str(aug_path.relative_to(project_root))

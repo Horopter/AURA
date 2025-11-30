@@ -147,3 +147,77 @@ def save_frames(
             except Exception:
                 pass
 
+
+def concatenate_videos(
+    video_paths: List[str],
+    output_path: str,
+    fps: float = 30.0
+) -> bool:
+    """
+    Concatenate multiple video files into a single video.
+    
+    Args:
+        video_paths: List of paths to video files to concatenate
+        output_path: Output video path
+        fps: Frames per second (should match input videos)
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    if not video_paths:
+        logger.warning("No video files to concatenate")
+        return False
+    
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Get video properties from first video
+    first_video = av.open(video_paths[0])
+    first_stream = first_video.streams.video[0]
+    width = first_stream.width
+    height = first_stream.height
+    first_video.close()
+    
+    # Create output container
+    output_container = None
+    try:
+        output_container = av.open(str(output_path), mode='w')
+        fps_fraction = Fraction(int(fps * 1000), 1000)
+        output_stream = output_container.add_stream('libx264', rate=fps_fraction)
+        output_stream.width = width
+        output_stream.height = height
+        output_stream.pix_fmt = 'yuv420p'
+        
+        # Process each input video
+        for video_path in video_paths:
+            if not Path(video_path).exists():
+                logger.warning(f"Intermediate video not found: {video_path}, skipping")
+                continue
+            
+            input_container = av.open(video_path)
+            input_stream = input_container.streams.video[0]
+            
+            # Copy frames from input to output
+            for frame in input_container.decode(video=0):
+                # Convert frame to output stream format
+                frame.pts = None  # Let encoder set PTS
+                for packet in output_stream.encode(frame):
+                    output_container.mux(packet)
+            
+            input_container.close()
+        
+        # Flush encoder
+        for packet in output_stream.encode():
+            output_container.mux(packet)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Failed to concatenate videos: {e}")
+        return False
+    finally:
+        if output_container is not None:
+            try:
+                output_container.close()
+            except Exception:
+                pass
+
