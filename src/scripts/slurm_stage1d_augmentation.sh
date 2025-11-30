@@ -104,8 +104,8 @@ fi
 export PYTORCH_ALLOC_CONF="expandable_segments:true,max_split_size_mb:128"
 export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
-export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 
 # ============================================================================
 # System Information
