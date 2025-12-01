@@ -62,40 +62,90 @@ def augment_video(
     if chunk_size is None:
         chunk_size = 1000
     
-    # First, get total frame count and FPS
+    # Always count frames manually for reliability (metadata can be corrupted)
     container = None
+    total_frames = 0
+    fps = 30.0
+    MAX_REASONABLE_FRAMES = 10_000_000
+    
     try:
         container = av.open(video_path)
         stream = container.streams.video[0]
         fps = float(stream.average_rate) if stream.average_rate else 30.0
-        total_frames = stream.frames if stream.frames > 0 else 0
         
-        # If we can't get frame count, estimate from duration
-        if total_frames == 0 and stream.duration:
-            total_frames = int(stream.duration * stream.average_rate / stream.time_base)
+        # Get metadata values for sanity check (but don't trust them)
+        stream_frames_metadata = stream.frames if stream.frames > 0 else 0
+        duration_frames_metadata = 0
+        if stream.duration is not None and stream.time_base is not None:
+            try:
+                duration_seconds = float(stream.duration * stream.time_base)
+                duration_frames_metadata = int(duration_seconds * fps)
+            except Exception as e:
+                logger.debug(f"Could not calculate frames from duration: {e}")
+        
+        # Always count frames manually for accuracy
+        logger.debug(f"Counting frames manually for reliable frame count...")
+        frame_count = 0
+        for packet in container.demux(stream):
+            for frame in packet.decode():
+                frame_count += 1
+                # Safety limit: stop counting if we exceed reasonable limit
+                if frame_count > MAX_REASONABLE_FRAMES:
+                    logger.error(f"Frame count exceeds {MAX_REASONABLE_FRAMES}, stopping count")
+                    break
+            if frame_count > MAX_REASONABLE_FRAMES:
+                break
+        
+        total_frames = frame_count
+        
+        # Sanity check: compare manual count with metadata
+        if stream_frames_metadata > 0 or duration_frames_metadata > 0:
+            metadata_count = stream_frames_metadata if stream_frames_metadata > 0 else duration_frames_metadata
+            if metadata_count > 0:
+                ratio = max(total_frames, metadata_count) / min(total_frames, metadata_count) if min(total_frames, metadata_count) > 0 else 1.0
+                if ratio > 1.5:  # More than 50% difference
+                    logger.warning(
+                        f"Metadata frame count ({metadata_count}) differs significantly from manual count ({total_frames}), "
+                        f"using manual count (ratio: {ratio:.2f})"
+                    )
+                else:
+                    logger.debug(f"Manual count ({total_frames}) matches metadata ({metadata_count})")
         
         container.close()
         container = None
+        logger.info(f"Manually counted {total_frames} frames (fps: {fps:.2f})")
+        
     except Exception as e:
-        logger.error(f"Failed to get video info: {e}")
-        return []
-    finally:
+        logger.error(f"Failed to count frames manually: {e}")
         if container is not None:
             try:
                 container.close()
             except Exception:
                 pass
-    
-    if total_frames == 0:
-        logger.warning(f"Could not determine total frames for {video_path}")
-        # Fallback: try loading first chunk
-        original_frames, fps = load_frames(video_path, max_frames=chunk_size, start_frame=0)
-        if not original_frames:
+        container = None
+        
+        # Last resort: try loading first chunk to estimate
+        logger.warning(f"Trying to estimate from first chunk...")
+        try:
+            original_frames, fps = load_frames(video_path, max_frames=chunk_size, start_frame=0)
+            if not original_frames:
+                logger.error(f"Could not load any frames from {video_path}")
+                return []
+            total_frames = len(original_frames)
+            # If we got exactly chunk_size frames, there might be more
+            if len(original_frames) == chunk_size:
+                logger.warning(f"Video might have more than {chunk_size} frames, but exact count unknown")
+                # Try to get a better estimate by loading more
+                try:
+                    more_frames, _ = load_frames(video_path, max_frames=chunk_size * 10, start_frame=0)
+                    if len(more_frames) > len(original_frames):
+                        total_frames = len(more_frames)
+                        logger.info(f"Loaded {total_frames} frames, assuming this is the total")
+                except Exception:
+                    pass
+        except Exception as e2:
+            logger.error(f"Failed to estimate from first chunk: {e2}")
             return []
-        total_frames = len(original_frames)
-        # If we got exactly chunk_size frames, there might be more
-        if len(original_frames) == chunk_size:
-            logger.warning(f"Video might have more than {chunk_size} frames, but exact count unknown")
     
     logger.info(f"Video has {total_frames} frames, processing in chunks of {chunk_size}")
     
@@ -175,10 +225,16 @@ def augment_video(
                     logger.info(f"Resuming from chunk {max_completed_chunk + 2}/{num_chunks}")
         
         # Process chunks that haven't been checkpointed
+        consecutive_empty_chunks = 0
         for chunk_idx in range(num_chunks):
             start_frame = chunk_idx * chunk_size
             end_frame = min(start_frame + chunk_size, total_frames)
             frames_in_chunk = end_frame - start_frame
+            
+            # Early break if we've passed the video length
+            if start_frame >= total_frames:
+                logger.info(f"Reached end of video at chunk {chunk_idx + 1} (start_frame={start_frame} >= total_frames={total_frames})")
+                break
             
             # Check if this chunk is already complete for all augmentations
             chunk_complete = True
@@ -198,6 +254,7 @@ def augment_video(
                         # Insert in sorted order
                         intermediate_files[aug_idx].append(checkpoint_str)
                         intermediate_files[aug_idx].sort(key=lambda x: int(Path(x).stem.split('_')[1]))
+                consecutive_empty_chunks = 0  # Reset counter
                 continue
             
             logger.info(f"Processing chunk {chunk_idx + 1}/{num_chunks} (frames {start_frame}-{end_frame-1})")
@@ -206,8 +263,15 @@ def augment_video(
             chunk_frames, chunk_fps = load_frames(video_path, max_frames=chunk_size, start_frame=start_frame)
             
             if not chunk_frames:
+                consecutive_empty_chunks += 1
                 logger.warning(f"No frames loaded for chunk {chunk_idx + 1}, skipping")
+                # If we get multiple consecutive empty chunks, we've likely reached the end
+                if consecutive_empty_chunks >= 2:
+                    logger.info(f"Got {consecutive_empty_chunks} consecutive empty chunks, reached end of video")
+                    break
                 continue
+            
+            consecutive_empty_chunks = 0  # Reset counter on successful load
             
             if len(chunk_frames) != frames_in_chunk:
                 logger.warning(f"Expected {frames_in_chunk} frames, got {len(chunk_frames)}")

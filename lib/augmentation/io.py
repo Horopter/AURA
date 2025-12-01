@@ -43,15 +43,66 @@ def load_frames(
         stream = container.streams.video[0]
         fps = float(stream.average_rate) if stream.average_rate else 30.0
         
-        total_frames = stream.frames if stream.frames > 0 else 0
-        end_frame = start_frame + max_frames if max_frames else total_frames
+        # Always count frames manually for reliability (metadata can be corrupted)
+        MAX_REASONABLE_FRAMES = 10_000_000
         
-        if total_frames > 0 and end_frame > total_frames:
+        # Get metadata for sanity check (but don't trust it)
+        stream_frames_metadata = stream.frames if stream.frames > 0 else 0
+        duration_frames_metadata = 0
+        if stream.duration is not None and stream.time_base is not None:
+            try:
+                duration_seconds = float(stream.duration * stream.time_base)
+                duration_frames_metadata = int(duration_seconds * fps)
+            except Exception:
+                pass
+        
+        # Count frames manually for accurate count
+        logger.debug(f"Counting frames manually for reliable frame count...")
+        frame_count_manual = 0
+        for packet in container.demux(stream):
+            for frame in packet.decode():
+                frame_count_manual += 1
+                if frame_count_manual > MAX_REASONABLE_FRAMES:
+                    logger.warning(f"Frame count exceeds {MAX_REASONABLE_FRAMES}, stopping count")
+                    break
+            if frame_count_manual > MAX_REASONABLE_FRAMES:
+                break
+        
+        total_frames = frame_count_manual
+        
+        # Sanity check: compare with metadata
+        if (stream_frames_metadata > 0 or duration_frames_metadata > 0) and total_frames > 0:
+            metadata_count = stream_frames_metadata if stream_frames_metadata > 0 else duration_frames_metadata
+            if metadata_count > 0:
+                ratio = max(total_frames, metadata_count) / min(total_frames, metadata_count) if min(total_frames, metadata_count) > 0 else 1.0
+                if ratio > 1.5:
+                    logger.debug(
+                        f"Metadata frame count ({metadata_count}) differs from manual count ({total_frames}), "
+                        f"using manual count"
+                    )
+        
+        # Reopen container for actual frame loading
+        container.close()
+        container = av.open(video_path)
+        stream = container.streams.video[0]
+        
+        # Early return if start_frame exceeds video length
+        if start_frame >= total_frames:
+            logger.debug(f"start_frame ({start_frame}) >= total_frames ({total_frames}), returning empty")
+            return [], fps
+        
+        end_frame = start_frame + max_frames if max_frames else total_frames
+        if end_frame > total_frames:
             end_frame = total_frames
         
         frame_count = 0
         frames_to_skip = start_frame if start_frame > 0 else 0
         frames_to_load = end_frame - start_frame
+        
+        # Safety check
+        if frames_to_load <= 0:
+            logger.debug(f"frames_to_load ({frames_to_load}) <= 0, returning empty")
+            return [], fps
         
         # Try to seek to approximate position if start_frame > 0
         if start_frame > 0:
@@ -80,7 +131,10 @@ def load_frames(
             if frame_count >= frames_to_load:
                 break
         
-        logger.debug(f"Loaded {len(frames)} frames from {Path(video_path).name} (frames {start_frame}-{start_frame+len(frames)-1})")
+        if len(frames) > 0:
+            logger.debug(f"Loaded {len(frames)} frames from {Path(video_path).name} (frames {start_frame}-{start_frame+len(frames)-1})")
+        else:
+            logger.debug(f"Loaded 0 frames from {Path(video_path).name} (start_frame={start_frame}, total_frames={total_frames})")
         return frames, fps
     except Exception as e:
         logger.error(f"Failed to load video {video_path}: {e}")
