@@ -1,4 +1,4 @@
-# Video files (too large for GitHub)
+# Exclude video files (too large for GitHub)
 videos/fake/*.mp4
 videos/real/*.mp4
 !videos/fake/.gitkeep
