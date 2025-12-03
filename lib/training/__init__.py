@@ -31,6 +31,7 @@ from .slowfast import SlowFastModel
 from .x3d import X3DModel
 from .i3d import I3DModel
 from .r2plus1d import R2Plus1DModel
+from ._xgboost_pretrained import XGBoostPretrainedBaseline
 
 # Model factory
 from .model_factory import (
@@ -79,10 +80,12 @@ __all__ = [
     "X3DModel",
     "I3DModel",
     "R2Plus1DModel",
+    "XGBoostPretrainedBaseline",
     # Factory
     "create_model",
     "get_model_config",
     "is_pytorch_model",
+    "is_xgboost_model",
     "list_available_models",
     "download_pretrained_models",
     "MODEL_MEMORY_CONFIGS",

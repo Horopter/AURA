@@ -212,7 +212,7 @@ sbatch src/scripts/slurm_stage5_training.sh
 python src/run_new_pipeline.py
 
 # Or MLOps pipeline
-python src/run_mlops_pipeline.py
+python src/run_new_pipeline.py
 ```
 
 ## SLURM Script Configuration

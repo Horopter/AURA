@@ -427,17 +427,14 @@ log "✓ Fresh cleanup completed"
 USE_MLOPS_PIPELINE="${USE_MLOPS_PIPELINE:-true}"
 
 if [ "$USE_MLOPS_PIPELINE" = "true" ]; then
-    log "Using MLOps pipeline (run_mlops_pipeline.py)"
+    log "Using 5-stage pipeline (run_new_pipeline.py)"
     log "Features: K-fold CV, aggressive GC, OOM handling, per-stage checkpointing"
-    log "Pipeline order:"
-    log "  1. Load data (with duplicate videos from FVC_dup.csv)"
-    log "  2. Download/verify pretrained models (prerequisite)"
-    log "  3. Create balanced k-fold splits (stratified, class-balanced)"
-    log "  4. Generate shared augmentations (BEFORE models, cached globally)"
-    log "  5. Train all models sequentially (with shared data/augmentations)"
-    log ""
-    log "Note: Augmentations are generated ONCE and reused across all models and runs"
-    log "      (cached in intermediate_data/augmented_clips/shared/)"
+    log "Pipeline stages:"
+    log "  1. Video augmentation"
+    log "  2. Handcrafted feature extraction"
+    log "  3. Video scaling"
+    log "  4. Scaled video feature extraction"
+    log "  5. Model training with K-fold CV"
     
     PIPELINE_START=$(date +%s)
     LOG_FILE="$WORK_DIR/logs/fvc_binary_classifier_run.log"
@@ -449,15 +446,15 @@ if [ "$USE_MLOPS_PIPELINE" = "true" ]; then
     # Ensure we're using the correct Python from venv
     PYTHON_CMD=$(which python || echo "python")
     
-    if "$PYTHON_CMD" "$ORIG_DIR/src/run_mlops_pipeline.py" 2>&1 | tee "$LOG_FILE"; then
+    if "$PYTHON_CMD" "$ORIG_DIR/src/run_new_pipeline.py" 2>&1 | tee "$LOG_FILE"; then
         PIPELINE_END=$(date +%s)
         PIPELINE_DURATION=$((PIPELINE_END - PIPELINE_START))
-        log "✓ MLOps pipeline completed in ${PIPELINE_DURATION}s"
+        log "✓ 5-stage pipeline completed in ${PIPELINE_DURATION}s"
         NOTEBOOK_DURATION=$PIPELINE_DURATION
     else
         PIPELINE_END=$(date +%s)
         PIPELINE_DURATION=$((PIPELINE_END - PIPELINE_START))
-        log "✗ ERROR: MLOps pipeline failed after ${PIPELINE_DURATION}s!"
+        log "✗ ERROR: 5-stage pipeline failed after ${PIPELINE_DURATION}s!"
         log "Check log file: $LOG_FILE"
         exit 1
     fi

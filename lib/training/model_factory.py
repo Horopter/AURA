@@ -23,56 +23,55 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Memory-optimized configurations for each model type
-# NOTE: Baseline models use slightly larger batch sizes but remain conservative
-# to avoid excessive memory usage during feature extraction.
+# NOTE: Optimized for 256GB RAM - can use larger batch sizes and more frames
 MODEL_MEMORY_CONFIGS = {
     "logistic_regression": {
-        "batch_size": 4,  # Reduced from 8 for 80GB RAM constraint
-        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
-        "num_frames": 6,  # Reduced from 8 to save memory
-        "gradient_accumulation_steps": 2,  # Maintain effective batch size of 8
+        "batch_size": 8,  # Increased from 4 for 256GB RAM
+        "num_workers": 2,  # Can use workers with more RAM
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 1,  # No accumulation needed with larger batch
     },
     "svm": {
-        "batch_size": 4,  # Reduced from 8 for 80GB RAM constraint
-        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
-        "num_frames": 6,  # Reduced from 8 to save memory
-        "gradient_accumulation_steps": 2,  # Maintain effective batch size of 8
+        "batch_size": 8,  # Increased from 4 for 256GB RAM
+        "num_workers": 2,  # Can use workers with more RAM
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 1,  # No accumulation needed with larger batch
     },
     "naive_cnn": {
-        "batch_size": 1,  # Reduced from 2 for 80GB RAM constraint
-        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
-        "num_frames": 6,  # Reduced from 8 to save memory
-        "gradient_accumulation_steps": 8,  # Maintain effective batch size of 8
+        "batch_size": 4,  # Increased from 1 for 256GB RAM
+        "num_workers": 2,  # Can use workers with more RAM
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 2,  # Maintain effective batch size of 8
     },
     "vit_gru": {
-        "batch_size": 1,  # Minimum for memory efficiency
-        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
-        "num_frames": 6,  # Reduced from 8 to save memory
-        "gradient_accumulation_steps": 16,  # Maintain effective batch size of 16
+        "batch_size": 2,  # Increased from 1 for 256GB RAM
+        "num_workers": 2,  # Can use workers with more RAM
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 8,  # Maintain effective batch size of 16
     },
     "vit_transformer": {
-        "batch_size": 1,  # Minimum for memory efficiency
-        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
-        "num_frames": 6,  # Reduced from 8 to save memory
-        "gradient_accumulation_steps": 20,  # Maintain effective batch size of 20
+        "batch_size": 2,  # Increased from 1 for 256GB RAM
+        "num_workers": 2,  # Can use workers with more RAM
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 10,  # Maintain effective batch size of 20
     },
     "slowfast": {
-        "batch_size": 1,  # Minimum for memory efficiency
-        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
-        "num_frames": 6,  # Reduced from 8 to save memory
-        "gradient_accumulation_steps": 40,  # Maintain effective batch size of 40
+        "batch_size": 2,  # Increased from 1 for 256GB RAM
+        "num_workers": 2,  # Can use workers with more RAM
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 20,  # Maintain effective batch size of 40
     },
     "x3d": {
-        "batch_size": 1,  # Minimum for memory efficiency
-        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
-        "num_frames": 6,  # Reduced from 8 to save memory
-        "gradient_accumulation_steps": 20,  # Maintain effective batch size of 20
+        "batch_size": 2,  # Increased from 1 for 256GB RAM
+        "num_workers": 2,  # Can use workers with more RAM
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 10,  # Maintain effective batch size of 20
     },
     "pretrained_inception": {
-        "batch_size": 1,  # Reduced from 2 for 80GB RAM constraint
-        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
-        "num_frames": 6,  # Reduced from 8 to save memory
-        "gradient_accumulation_steps": 8,  # Maintain effective batch size of 8
+        "batch_size": 4,  # Increased from 1 for 256GB RAM
+        "num_workers": 2,  # Can use workers with more RAM
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 2,  # Maintain effective batch size of 8
     },
     "variable_ar_cnn": {
         "batch_size": 2,  # Can use slightly larger batch for smaller model
@@ -81,16 +80,48 @@ MODEL_MEMORY_CONFIGS = {
         "gradient_accumulation_steps": 4,
     },
     "i3d": {
-        "batch_size": 1,  # Minimum for memory efficiency
-        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
-        "num_frames": 6,  # Reduced from 8 to save memory
-        "gradient_accumulation_steps": 20,  # Maintain effective batch size of 20
+        "batch_size": 2,  # Increased from 1 for 256GB RAM
+        "num_workers": 2,  # Can use workers with more RAM
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 10,  # Maintain effective batch size of 20
     },
     "r2plus1d": {
-        "batch_size": 1,  # Minimum for memory efficiency
-        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
-        "num_frames": 6,  # Reduced from 8 to save memory
-        "gradient_accumulation_steps": 20,  # Maintain effective batch size of 20
+        "batch_size": 2,  # Increased from 1 for 256GB RAM
+        "num_workers": 2,  # Can use workers with more RAM
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 10,  # Maintain effective batch size of 20
+    },
+    # XGBoost models use pretrained models for feature extraction
+    # They don't need training configs, but we include them for consistency
+    "xgboost_i3d": {
+        "batch_size": 2,  # Feature extraction only, increased for 256GB RAM
+        "num_workers": 2,
+        "num_frames": 8,  # Match I3D config
+        "gradient_accumulation_steps": 1,  # Not used (no training)
+    },
+    "xgboost_r2plus1d": {
+        "batch_size": 2,  # Increased for 256GB RAM
+        "num_workers": 2,
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 1,
+    },
+    "xgboost_vit_gru": {
+        "batch_size": 2,  # Increased for 256GB RAM
+        "num_workers": 2,
+        "num_frames": 8,
+        "gradient_accumulation_steps": 1,
+    },
+    "xgboost_vit_transformer": {
+        "batch_size": 2,  # Increased for 256GB RAM
+        "num_workers": 2,
+        "num_frames": 8,
+        "gradient_accumulation_steps": 1,
+    },
+    "xgboost_pretrained_inception": {
+        "batch_size": 2,  # Increased for 256GB RAM
+        "num_workers": 2,
+        "num_frames": 8,  # Increased from 6
+        "gradient_accumulation_steps": 1,
     },
 }
 
@@ -108,16 +139,16 @@ def get_model_config(model_type: str) -> Dict[str, Any]:
     if model_type not in MODEL_MEMORY_CONFIGS:
         logger.warning(f"Unknown model type: {model_type}. Using default config.")
         return {
-            "batch_size": 1,  # Conservative default for 80GB RAM
-            "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
-            "num_frames": 6,  # Reduced from 8 to save memory
-            "gradient_accumulation_steps": 8,  # Maintain effective batch size
+            "batch_size": 2,  # Conservative default for 256GB RAM
+            "num_workers": 2,  # Can use workers with more RAM
+            "num_frames": 8,  # Increased from 6
+            "gradient_accumulation_steps": 4,  # Maintain effective batch size
         }
     
     return MODEL_MEMORY_CONFIGS[model_type].copy()
 
 
-def list_available_models() -> List[str]:
+def list_available_models(include_xgboost: bool = True) -> List[str]:
     """List all available model types."""
     return list(MODEL_MEMORY_CONFIGS.keys())
 
@@ -235,21 +266,49 @@ def create_model(model_type: str, config: RunConfig) -> Any:
             pretrained=get_param("pretrained", True)
         )
     
+    elif model_type.startswith("xgboost_"):
+        # XGBoost with pretrained model features
+        # Format: "xgboost_i3d", "xgboost_r2plus1d", "xgboost_vit_gru", etc.
+        base_model_type = model_type.replace("xgboost_", "")
+        
+        # Validate base model type
+        if base_model_type not in ["i3d", "r2plus1d", "vit_gru", "vit_transformer", "pretrained_inception"]:
+            raise ValueError(
+                f"Unsupported base model for XGBoost: {base_model_type}. "
+                f"Supported: i3d, r2plus1d, vit_gru, vit_transformer, pretrained_inception"
+            )
+        
+        from ._xgboost_pretrained import XGBoostPretrainedBaseline
+        return XGBoostPretrainedBaseline(
+            base_model_type=base_model_type,
+            cache_dir=get_param("feature_cache_dir", None),
+            num_frames=get_param("num_frames", num_frames),
+            xgb_params=get_param("xgb_params", None)
+        )
+    
     else:
         raise ValueError(f"Unknown model type: {model_type}. Available: {list_available_models()}")
 
 
+def is_xgboost_model(model_type: str) -> bool:
+    """Check if model type is XGBoost-based."""
+    return model_type.startswith("xgboost_")
+
+
 def is_pytorch_model(model_type: str) -> bool:
     """
-    Check if model type is a PyTorch model (vs sklearn baseline).
+    Check if model type is a PyTorch model (vs sklearn/XGBoost baseline).
     
     Args:
         model_type: Model type identifier
     
     Returns:
-        True if PyTorch model, False if sklearn baseline
+        True if PyTorch model, False if sklearn/XGBoost baseline
     """
     sklearn_models = {"logistic_regression", "svm"}
+    # XGBoost models are not PyTorch models (they use PyTorch for feature extraction only)
+    if is_xgboost_model(model_type):
+        return False
     return model_type not in sklearn_models
 
 

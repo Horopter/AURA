@@ -17,8 +17,9 @@ from torch.utils.data import DataLoader
 from lib.data import stratified_kfold, load_metadata
 from lib.models import VideoConfig, VideoDataset
 from lib.mlops.config import ExperimentTracker, CheckpointManager
+from lib.mlops.mlflow_tracker import create_mlflow_tracker, MLFLOW_AVAILABLE
 from lib.training.trainer import OptimConfig, TrainConfig, fit
-from lib.training.model_factory import create_model, is_pytorch_model, get_model_config
+from lib.training.model_factory import create_model, is_pytorch_model, is_xgboost_model, get_model_config
 from lib.training.feature_preprocessing import remove_collinear_features, load_and_combine_features
 from lib.utils.memory import aggressive_gc
 
@@ -35,6 +36,7 @@ def stage5_train_models(
     num_frames: int = 8,
     output_dir: str = "data/training_results",
     use_tracking: bool = True,
+    use_mlflow: bool = True,
     train_ensemble: bool = False,
     ensemble_method: str = "meta_learner"
 ) -> Dict:
@@ -204,9 +206,26 @@ def stage5_train_models(
                 if use_tracking:
                     tracker = ExperimentTracker(str(fold_output_dir))
                     ckpt_manager = CheckpointManager(str(fold_output_dir))
+                    
+                    # Create MLflow tracker if available
+                    mlflow_tracker = None
+                    if use_mlflow and MLFLOW_AVAILABLE:
+                        try:
+                            mlflow_tracker = create_mlflow_tracker(
+                                experiment_name=f"{model_type}",
+                                use_mlflow=True
+                            )
+                            if mlflow_tracker:
+                                # Log model config (can be dict or RunConfig)
+                                mlflow_tracker.log_config(model_config)
+                                mlflow_tracker.set_tag("fold", str(fold_idx + 1))
+                                mlflow_tracker.set_tag("model_type", model_type)
+                        except Exception as e:
+                            logger.warning(f"Failed to create MLflow tracker: {e}")
                 else:
                     tracker = None
                     ckpt_manager = None
+                    mlflow_tracker = None
                 
                 logger.info(f"Training PyTorch model {model_type} on fold {fold_idx + 1}...")
                 
@@ -233,6 +252,22 @@ def stage5_train_models(
                     
                     logger.info(f"Fold {fold_idx + 1} - Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
                     
+                    # Log to MLflow if available
+                    if 'mlflow_tracker' in locals() and mlflow_tracker is not None:
+                        try:
+                            mlflow_tracker.log_metrics({
+                                "val_loss": val_loss,
+                                "val_acc": val_acc,
+                            }, step=fold_idx + 1)
+                            # Log model artifact (after model is saved)
+                            if 'model_path' in locals():
+                                model_path_str = str(model_path)
+                                mlflow_tracker.log_artifact(
+                                    model_path_str, artifact_path="models"
+                                )
+                        except Exception as e:
+                            logger.warning(f"Failed to log to MLflow: {e}")
+                    
                     # Save model for ensemble training
                     model.eval()
                     model_path = fold_output_dir / "model.pt"
@@ -247,24 +282,142 @@ def stage5_train_models(
                         "val_acc": float('nan'),
                     })
                 
+                # End MLflow run if active
+                if 'mlflow_tracker' in locals() and mlflow_tracker is not None:
+                    try:
+                        mlflow_tracker.end_run()
+                    except Exception as e:
+                        logger.debug(f"Error ending MLflow run: {e}")
+                
                 # Clear model and aggressively free memory
                 if 'model' in locals():
                     del model
                 torch.cuda.empty_cache() if torch.cuda.is_available() else None
                 aggressive_gc(clear_cuda=False)
+            elif is_xgboost_model(model_type):
+                # XGBoost model training (uses pretrained models for feature extraction)
+                logger.info(f"Training XGBoost model {model_type} on fold {fold_idx + 1}...")
+                
+                fold_output_dir = model_output_dir / f"fold_{fold_idx + 1}"
+                fold_output_dir.mkdir(parents=True, exist_ok=True)
+                
+                try:
+                    # Create XGBoost model
+                    model = create_model(model_type, model_config)
+                    
+                    # Train XGBoost (handles feature extraction internally)
+                    model.fit(train_df, project_root=str(project_root))
+                    
+                    # Evaluate on validation set
+                    val_probs = model.predict(val_df, project_root=str(project_root))
+                    val_preds = np.argmax(val_probs, axis=1)
+                    val_labels = val_df["label"].to_list()
+                    label_map = {label: idx for idx, label in enumerate(sorted(set(val_labels)))}
+                    val_y = np.array([label_map[label] for label in val_labels])
+                    
+                    val_acc = (val_preds == val_y).mean()
+                    val_loss = -np.mean(np.log(val_probs[np.arange(len(val_y)), val_y] + 1e-10))  # Cross-entropy
+                    
+                    fold_results.append({
+                        "fold": fold_idx + 1,
+                        "val_loss": val_loss,
+                        "val_acc": val_acc,
+                    })
+                    
+                    logger.info(f"Fold {fold_idx + 1} - Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
+                    
+                    # Save model
+                    model.save(str(fold_output_dir))
+                    logger.info(f"Saved XGBoost model to {fold_output_dir}")
+                    
+                except Exception as e:
+                    logger.error(f"Error training XGBoost fold {fold_idx + 1}: {e}", exc_info=True)
+                    fold_results.append({
+                        "fold": fold_idx + 1,
+                        "val_loss": float('nan'),
+                        "val_acc": float('nan'),
+                    })
+                
+                # Clear model and aggressively free memory
+                if 'model' in locals():
+                    del model
+                torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                aggressive_gc(clear_cuda=True)
             else:
                 # Baseline model training (sklearn)
-                logger.warning(f"Baseline model training not yet implemented in stage5")
-                fold_results.append({
-                    "fold": fold_idx + 1,
-                    "val_loss": float('nan'),
-                    "val_acc": float('nan'),
-                })
+                logger.info(f"Training baseline model {model_type} on fold {fold_idx + 1}...")
+                
+                fold_output_dir = model_output_dir / f"fold_{fold_idx + 1}"
+                fold_output_dir.mkdir(parents=True, exist_ok=True)
+                
+                try:
+                    # Create baseline model
+                    model = create_model(model_type, model_config)
+                    
+                    # Train baseline (handles feature extraction internally)
+                    model.fit(train_df, project_root=str(project_root))
+                    
+                    # Evaluate on validation set
+                    val_probs = model.predict(val_df, project_root=str(project_root))
+                    val_preds = np.argmax(val_probs, axis=1)
+                    val_labels = val_df["label"].to_list()
+                    label_map = {label: idx for idx, label in enumerate(sorted(set(val_labels)))}
+                    val_y = np.array([label_map[label] for label in val_labels])
+                    
+                    val_acc = (val_preds == val_y).mean()
+                    val_loss = -np.mean(np.log(val_probs[np.arange(len(val_y)), val_y] + 1e-10))  # Cross-entropy
+                    
+                    fold_results.append({
+                        "fold": fold_idx + 1,
+                        "val_loss": val_loss,
+                        "val_acc": val_acc,
+                    })
+                    
+                    logger.info(f"Fold {fold_idx + 1} - Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
+                    
+                    # Save model
+                    model.save(str(fold_output_dir))
+                    logger.info(f"Saved baseline model to {fold_output_dir}")
+                    
+                except Exception as e:
+                    logger.error(
+                        f"Error training baseline fold {fold_idx + 1}: {e}",
+                        exc_info=True
+                    )
+                    fold_results.append({
+                        "fold": fold_idx + 1,
+                        "val_loss": float('nan'),
+                        "val_acc": float('nan'),
+                    })
+                
+                # Clear model and aggressively free memory
+                if 'model' in locals():
+                    del model
+                aggressive_gc(clear_cuda=False)
         
-        # Aggregate results
+        # Aggregate results (filter out NaN values)
         if fold_results:
-            avg_val_loss = sum(r["val_loss"] for r in fold_results if not (isinstance(r["val_loss"], float) and (r["val_loss"] != r["val_loss"]))) / len([r for r in fold_results if not (isinstance(r["val_loss"], float) and (r["val_loss"] != r["val_loss"]))])
-            avg_val_acc = sum(r["val_acc"] for r in fold_results if not (isinstance(r["val_acc"], float) and (r["val_acc"] != r["val_acc"]))) / len([r for r in fold_results if not (isinstance(r["val_acc"], float) and (r["val_acc"] != r["val_acc"]))])
+            valid_losses = [
+                r["val_loss"] for r in fold_results
+                if isinstance(r["val_loss"], (int, float))
+                and not (isinstance(r["val_loss"], float)
+                         and r["val_loss"] != r["val_loss"])
+            ]
+            valid_accs = [
+                r["val_acc"] for r in fold_results
+                if isinstance(r["val_acc"], (int, float))
+                and not (isinstance(r["val_acc"], float)
+                         and r["val_acc"] != r["val_acc"])
+            ]
+            
+            avg_val_loss = (
+                sum(valid_losses) / len(valid_losses)
+                if valid_losses else float('nan')
+            )
+            avg_val_acc = (
+                sum(valid_accs) / len(valid_accs)
+                if valid_accs else float('nan')
+            )
             
             results[model_type] = {
                 "fold_results": fold_results,
@@ -272,7 +425,10 @@ def stage5_train_models(
                 "avg_val_acc": avg_val_acc,
             }
             
-            logger.info(f"\n{model_type} - Avg Val Loss: {avg_val_loss:.4f}, Avg Val Acc: {avg_val_acc:.4f}")
+            logger.info(
+                "\n%s - Avg Val Loss: %.4f, Avg Val Acc: %.4f",
+                model_type, avg_val_loss, avg_val_acc
+            )
         
         # Aggressive GC after all folds for this model type
         aggressive_gc(clear_cuda=False)

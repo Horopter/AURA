@@ -21,6 +21,7 @@ import av
 from lib.data import load_metadata
 from lib.utils.paths import resolve_video_path
 from lib.utils.memory import aggressive_gc, log_memory_stats
+from lib.utils.schemas import validate_stage_output, PANDERA_AVAILABLE
 from lib.features.handcrafted import extract_all_features, HandcraftedFeatureExtractor
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,15 @@ def stage2_extract_features(
         df = pl.read_ipc(metadata_path_obj) if metadata_path_obj.suffix == '.arrow' else pl.read_parquet(metadata_path_obj)
     else:
         df = pl.read_csv(augmented_metadata_path)
+    
+    # Validate Stage 1 output schema using Pandera
+    if PANDERA_AVAILABLE:
+        logger.info("Stage 2: Validating Stage 1 output schema...")
+        if not validate_stage_output(df, stage=1):
+            logger.warning("Stage 1 output validation failed, but continuing...")
+    else:
+        logger.debug("Pandera not available, skipping schema validation")
+    
     logger.info(f"Stage 2: Processing {df.height} videos")
     
     extractor = HandcraftedFeatureExtractor()

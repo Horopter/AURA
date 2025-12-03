@@ -329,11 +329,10 @@ def build_mlops_pipeline(config: RunConfig, tracker: ExperimentTracker,
         
         from lib.data import make_balanced_batch_sampler
         
-        # For 4 CPUs and 80GB RAM, always use num_workers=0
-        # to avoid multiprocessing overhead and OOM from worker processes
-        # With only 4 CPUs, multiprocessing workers consume too much memory
-            effective_num_workers = 0
-        logger.info("Using num_workers=0 (optimized for 4 CPUs, 80GB RAM to avoid OOM)")
+        # For 256GB RAM, can use num_workers=2 for better throughput
+        # With more RAM available, multiprocessing workers are safe
+        effective_num_workers = 2
+        logger.info("Using num_workers=2 (optimized for 256GB RAM)")
         
         # Try balanced sampling
         try:

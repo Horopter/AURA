@@ -12,11 +12,13 @@
 #
 
 #SBATCH --job-name=fvc_stage5_train
-#SBATCH --account=eecs442f25_class
+#SBATCH --account=stats_dept1
 #SBATCH --partition=gpu
-#SBATCH --gpus=1
-#SBATCH --time=12:00:00
-#SBATCH --mem=80G
+#SBATCH --gres=gpu:4
+#SBATCH --mem=256G
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --time=1-00:00:00          # 1 day
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/stage5_train-%j.out
 #SBATCH --error=logs/stage5_train-%j.err
@@ -35,10 +37,10 @@ unset MallocStackLogging || true
 unset MallocStackLoggingNoCompact || true
 export PYTHONWARNINGS="ignore::UserWarning,ignore::DeprecationWarning,ignore::FutureWarning"
 
-# Set extreme conservative memory settings
+# Set memory-optimized settings for 256GB RAM
 if [ -z "${FVC_FIXED_SIZE:-}" ]; then
-    export FVC_FIXED_SIZE=112
-    echo "Using extreme conservative resolution: FVC_FIXED_SIZE=112 (112x112)" >&2
+    export FVC_FIXED_SIZE=224
+    echo "Using optimized resolution: FVC_FIXED_SIZE=224 (224x224) for 256GB RAM" >&2
 fi
 
 # ============================================================================
@@ -82,7 +84,7 @@ export VIRTUAL_ENV_DISABLE_PROMPT=1
 # Environment Variables
 # ============================================================================
 
-export PYTORCH_ALLOC_CONF="expandable_segments:true,max_split_size_mb:128"
+export PYTORCH_ALLOC_CONF="expandable_segments:true,max_split_size_mb:512"
 export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
@@ -211,7 +213,7 @@ log "=========================================="
 # Get model types from environment or use default
 MODELS="${FVC_MODELS:-logistic_regression svm}"
 MODELS_ARRAY=($MODELS)
-NUM_FRAMES="${FVC_NUM_FRAMES:-6}"  # Optimized for 80GB RAM
+NUM_FRAMES="${FVC_NUM_FRAMES:-8}"  # Optimized for 256GB RAM
 N_SPLITS="${FVC_N_SPLITS:-5}"
 OUTPUT_DIR="${FVC_STAGE5_OUTPUT_DIR:-data/training_results}"
 USE_TRACKING="${FVC_USE_TRACKING:-true}"

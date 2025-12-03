@@ -105,8 +105,8 @@ Examples:
     parser.add_argument(
         "--num-frames",
         type=int,
-        default=6,
-        help="Number of frames per video (default: 6, optimized for 80GB RAM)"
+        default=8,
+        help="Number of frames per video (default: 8, optimized for 256GB RAM)"
     )
     parser.add_argument(
         "--output-dir",

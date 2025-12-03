@@ -113,7 +113,7 @@ class SVMBaseline:
         features = self.feature_extractor.extract_batch(
             video_paths,
             project_root,
-            batch_size=4  # Reduced from 10 for 80GB RAM constraint
+            batch_size=8  # Increased from 4 for 256GB RAM
         )
         
         # Apply same feature filtering as during training

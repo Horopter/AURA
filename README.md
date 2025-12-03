@@ -52,17 +52,12 @@ python3 src/setup_fvc_dataset.py
 
 ### 3. Run Training
 
-**Option A: Using MLOps Pipeline (Recommended)**
-```bash
-python3 src/run_mlops_pipeline.py
-```
-
-**Option B: Using 5-Stage Pipeline**
+**Option A: Using 5-Stage Pipeline (Recommended)**
 ```bash
 python3 src/run_new_pipeline.py
 ```
 
-**Option C: Using Individual Stage Scripts**
+**Option B: Using Individual Stage Scripts**
 ```bash
 # Run stages individually
 python3 src/scripts/run_stage1_augmentation.py

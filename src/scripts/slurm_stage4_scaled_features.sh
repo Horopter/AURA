@@ -11,11 +11,13 @@
 #
 
 #SBATCH --job-name=fvc_stage4_feat
-#SBATCH --account=eecs442f25_class
+#SBATCH --account=stats_dept1
 #SBATCH --partition=gpu
-#SBATCH --gpus=0  # Feature extraction doesn't need GPU
-#SBATCH --time=6:00:00
-#SBATCH --mem=80G
+#SBATCH --gres=gpu:4
+#SBATCH --mem=256G
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --time=1-00:00:00          # 1 day
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/stage4_feat-%j.out
 #SBATCH --error=logs/stage4_feat-%j.err
@@ -74,7 +76,7 @@ export VIRTUAL_ENV_DISABLE_PROMPT=1
 # Environment Variables
 # ============================================================================
 
-export PYTORCH_ALLOC_CONF="expandable_segments:true,max_split_size_mb:128"
+export PYTORCH_ALLOC_CONF="expandable_segments:true,max_split_size_mb:512"
 export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
@@ -157,7 +159,7 @@ log "=========================================="
 log "Starting Stage 4: Scaled Video Feature Extraction"
 log "=========================================="
 
-NUM_FRAMES="${FVC_NUM_FRAMES:-6}"  # Optimized for 80GB RAM
+NUM_FRAMES="${FVC_NUM_FRAMES:-8}"  # Optimized for 256GB RAM
 OUTPUT_DIR="${FVC_STAGE4_OUTPUT_DIR:-data/features_stage4}"
 log "Number of frames: $NUM_FRAMES"
 log "Output directory: $OUTPUT_DIR"

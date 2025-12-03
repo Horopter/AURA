@@ -94,8 +94,8 @@ Examples:
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=250,
-        help="Number of frames to process per chunk (default: 250, optimized for 80GB RAM)"
+        default=500,
+        help="Number of frames to process per chunk (default: 500, optimized for 256GB RAM)"
     )
     parser.add_argument(
         "--output-dir",

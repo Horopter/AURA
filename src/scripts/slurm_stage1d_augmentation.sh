@@ -6,11 +6,12 @@
 # transformations. Processes fourth quarter of videos (75-100%).
 #
 # Usage:
-#   # Default: FVC_NUM_AUGMENTATIONS=10, FVC_DELETE_EXISTING=1
+#   # Default: FVC_NUM_AUGMENTATIONS=10, FVC_DELETE_EXISTING=0 (preserves existing)
 #   sbatch src/scripts/slurm_stage1d_augmentation.sh
 #   
 #   # Or override defaults:
-#   FVC_NUM_AUGMENTATIONS=10 FVC_DELETE_EXISTING=1 sbatch src/scripts/slurm_stage1d_augmentation.sh
+#   FVC_NUM_AUGMENTATIONS=10 FVC_DELETE_EXISTING=0 sbatch src/scripts/slurm_stage1d_augmentation.sh
+#   FVC_NUM_AUGMENTATIONS=10 FVC_DELETE_EXISTING=1 sbatch src/scripts/slurm_stage1d_augmentation.sh  # To delete existing
 #
 # Environment variables:
 #   FVC_NUM_AUGMENTATIONS: Number of augmentations per video (default: 10)
@@ -251,14 +252,15 @@ else
     }
 fi
 
-# Get delete-existing flag from environment (default: 1 for parallel jobs to avoid conflicts)
-DELETE_EXISTING="${FVC_DELETE_EXISTING:-1}"
-if [ "$DELETE_EXISTING" = "1" ] || [ "$DELETE_EXISTING" = "true" ] || [ "$DELETE_EXISTING" = "yes" ]; then
+# Get delete-existing flag from environment (default: 0, preserves existing)
+DELETE_EXISTING="${FVC_DELETE_EXISTING:-0}"
+# Check if delete is explicitly enabled (1, true, yes) - anything else is treated as false
+if [ "$DELETE_EXISTING" = "1" ] || [ "$DELETE_EXISTING" = "true" ] || [ "$DELETE_EXISTING" = "yes" ] || [ "$DELETE_EXISTING" = "True" ] || [ "$DELETE_EXISTING" = "Yes" ]; then
     DELETE_EXISTING_FLAG="--delete-existing"
     log "Delete existing augmentations: YES (will delete and regenerate)"
 else
     DELETE_EXISTING_FLAG=""
-    log "Delete existing augmentations: NO (will preserve existing)"
+    log "Delete existing augmentations: NO (will preserve existing) - FVC_DELETE_EXISTING='$DELETE_EXISTING'"
 fi
 
 STAGE1_START=$(date +%s)
