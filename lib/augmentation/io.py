@@ -14,6 +14,7 @@ import numpy as np
 import av
 
 from lib.utils.memory import aggressive_gc
+from lib.utils.video_cache import get_video_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -39,50 +40,12 @@ def load_frames(
     container = None
     
     try:
-        container = av.open(video_path)
-        stream = container.streams.video[0]
-        fps = float(stream.average_rate) if stream.average_rate else 30.0
+        # Use cached metadata to avoid duplicate frame counting
+        metadata = get_video_metadata(video_path, use_cache=True)
+        total_frames = metadata['total_frames']
+        fps = metadata['fps']
         
-        # Always count frames manually for reliability (metadata can be corrupted)
-        MAX_REASONABLE_FRAMES = 10_000_000
-        
-        # Get metadata for sanity check (but don't trust it)
-        stream_frames_metadata = stream.frames if stream.frames > 0 else 0
-        duration_frames_metadata = 0
-        if stream.duration is not None and stream.time_base is not None:
-            try:
-                duration_seconds = float(stream.duration * stream.time_base)
-                duration_frames_metadata = int(duration_seconds * fps)
-            except Exception:
-                pass
-        
-        # Count frames manually for accurate count
-        logger.debug(f"Counting frames manually for reliable frame count...")
-        frame_count_manual = 0
-        for packet in container.demux(stream):
-            for frame in packet.decode():
-                frame_count_manual += 1
-                if frame_count_manual > MAX_REASONABLE_FRAMES:
-                    logger.warning(f"Frame count exceeds {MAX_REASONABLE_FRAMES}, stopping count")
-                    break
-            if frame_count_manual > MAX_REASONABLE_FRAMES:
-                break
-        
-        total_frames = frame_count_manual
-        
-        # Sanity check: compare with metadata
-        if (stream_frames_metadata > 0 or duration_frames_metadata > 0) and total_frames > 0:
-            metadata_count = stream_frames_metadata if stream_frames_metadata > 0 else duration_frames_metadata
-            if metadata_count > 0:
-                ratio = max(total_frames, metadata_count) / min(total_frames, metadata_count) if min(total_frames, metadata_count) > 0 else 1.0
-                if ratio > 1.5:
-                    logger.debug(
-                        f"Metadata frame count ({metadata_count}) differs from manual count ({total_frames}), "
-                        f"using manual count"
-                    )
-        
-        # Reopen container for actual frame loading
-        container.close()
+        # Open container only for frame loading (not counting)
         container = av.open(video_path)
         stream = container.streams.video[0]
         

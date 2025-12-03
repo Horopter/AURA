@@ -2,12 +2,12 @@
 #
 # SLURM Batch Script for Stage 4: Downscaled Feature Extraction
 #
-# Extracts additional features from downscaled videos (P features).
+# Extracts additional features from scaled videos (P features).
 #
 # Usage:
-#   sbatch src/scripts/slurm_stage4_downscaled_features.sh
-#   sbatch --time=6:00:00 src/scripts/slurm_stage4_downscaled_features.sh
-#   sbatch --mem=80G src/scripts/slurm_stage4_downscaled_features.sh
+#   sbatch src/scripts/slurm_stage4_scaled_features.sh
+#   sbatch --time=6:00:00 src/scripts/slurm_stage4_scaled_features.sh
+#   sbatch --mem=80G src/scripts/slurm_stage4_scaled_features.sh
 #
 
 #SBATCH --job-name=fvc_stage4_feat
@@ -85,7 +85,7 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 # ============================================================================
 
 log "=========================================="
-log "STAGE 4: DOWNSCALED FEATURE EXTRACTION JOB"
+log "STAGE 4: SCALED VIDEO FEATURE EXTRACTION JOB"
 log "=========================================="
 log "Host:        $(hostname)"
 log "Date:        $(date -Is)"
@@ -137,14 +137,14 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
 fi
 
 # Verify Stage 3 output
-DOWNSCALED_METADATA="${FVC_STAGE3_OUTPUT_DIR:-data/downscaled_videos}/downscaled_metadata.csv"
-DOWNSCALED_METADATA="$ORIG_DIR/$DOWNSCALED_METADATA"
-if [ ! -f "$DOWNSCALED_METADATA" ]; then
-    log "✗ ERROR: Stage 3 output not found: $DOWNSCALED_METADATA"
-    log "  Run Stage 3 first: sbatch src/scripts/slurm_stage3_downscaling.sh"
+SCALED_METADATA="${FVC_STAGE3_OUTPUT_DIR:-data/scaled_videos}/scaled_metadata.arrow"
+SCALED_METADATA="$ORIG_DIR/$SCALED_METADATA"
+if [ ! -f "$SCALED_METADATA" ]; then
+    log "✗ ERROR: Stage 3 output not found: $SCALED_METADATA"
+    log "  Run Stage 3 first: sbatch src/scripts/slurm_stage3_scaling.sh"
     exit 1
 else
-    log "✓ Stage 3 output found: $DOWNSCALED_METADATA"
+    log "✓ Stage 3 output found: $SCALED_METADATA"
 fi
 
 log "✅ All prerequisites verified"
@@ -154,7 +154,7 @@ log "✅ All prerequisites verified"
 # ============================================================================
 
 log "=========================================="
-log "Starting Stage 4: Downscaled Feature Extraction"
+log "Starting Stage 4: Scaled Video Feature Extraction"
 log "=========================================="
 
 NUM_FRAMES="${FVC_NUM_FRAMES:-6}"  # Optimized for 80GB RAM
@@ -163,18 +163,18 @@ log "Number of frames: $NUM_FRAMES"
 log "Output directory: $OUTPUT_DIR"
 
 STAGE4_START=$(date +%s)
-LOG_FILE="$ORIG_DIR/logs/stage4_downscaled_features_${SLURM_JOB_ID:-$$}.log"
+LOG_FILE="$ORIG_DIR/logs/stage4_scaled_features_${SLURM_JOB_ID:-$$}.log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
 cd "$ORIG_DIR" || exit 1
 PYTHON_CMD=$(which python || echo "python")
 
-log "Running Stage 4 downscaled feature extraction script..."
+log "Running Stage 4 scaled feature extraction script..."
 log "Log file: $LOG_FILE"
 
-if "$PYTHON_CMD" "$ORIG_DIR/src/scripts/run_stage4_downscaled_features.py" \
+if "$PYTHON_CMD" "$ORIG_DIR/src/scripts/run_stage4_scaled_features.py" \
     --project-root "$ORIG_DIR" \
-    --downscaled-metadata "${FVC_STAGE3_OUTPUT_DIR:-data/downscaled_videos}/downscaled_metadata.csv" \
+    --scaled-metadata "${FVC_STAGE3_OUTPUT_DIR:-data/scaled_videos}/scaled_metadata.arrow" \
     --num-frames "$NUM_FRAMES" \
     --output-dir "$OUTPUT_DIR" \
     2>&1 | tee "$LOG_FILE"; then

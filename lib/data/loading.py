@@ -250,21 +250,68 @@ def stratified_kfold(
 ) -> List[Tuple[pl.DataFrame, pl.DataFrame]]:
     """
     Stratified K-fold splits on labels.
+    
+    CRITICAL: If 'dup_group' exists, groups by dup_group first to prevent
+    data leakage (near-duplicate videos must stay together in same fold).
 
     Returns a list of (train_df, val_df) for each fold.
     """
-    key = _build_strat_key(df).to_numpy()
-    n = df.height
-    indices = np.arange(n)
     rng = np.random.default_rng(random_state)
-    rng.shuffle(indices)
+    
+    # CRITICAL FIX: Handle dup_group to prevent data leakage
+    if "dup_group" in df.columns:
+        logger.info("stratified_kfold: Grouping by dup_group to prevent data leakage")
+        
+        # Work at dup_group level to keep near-duplicates together
+        group_df = df.select(["dup_group", "label", *([c for c in df.columns if c == "platform"])]) \
+            .unique(subset=["dup_group"])
+        strat_key = _build_strat_key(group_df).to_numpy()
+        
+        groups = group_df["dup_group"].to_numpy()
+        n_groups = len(groups)
+        
+        # Shuffle group indices
+        group_indices = np.arange(n_groups)
+        rng.shuffle(group_indices)
+        
+        # Distribute groups to folds in a stratified round-robin manner
+        folds_group_indices: List[List[int]] = [[] for _ in range(n_splits)]
+        for key in np.unique(strat_key):
+            key_group_idx = group_indices[strat_key[group_indices] == key]
+            for i, gidx in enumerate(key_group_idx):
+                folds_group_indices[i % n_splits].append(int(gidx))
+        
+        # Build group-to-video mapping first
+        group_to_video_indices: Dict[str, List[int]] = defaultdict(list)
+        for i in range(df.height):
+            row = df.row(i, named=True)
+            dup_grp = str(row.get("dup_group", ""))
+            group_to_video_indices[dup_grp].append(i)
+        
+        # Now assign video indices to folds based on group assignment
+        folds_indices: List[List[int]] = [[] for _ in range(n_splits)]
+        for fold_idx in range(n_splits):
+            fold_groups = groups[folds_group_indices[fold_idx]]
+            for group_val in fold_groups:
+                group_str = str(group_val)
+                if group_str in group_to_video_indices:
+                    folds_indices[fold_idx].extend(group_to_video_indices[group_str])
+        
+        # Create indices array for later use
+        indices = np.arange(df.height)
+    else:
+        # Original logic when no dup_group
+        key = _build_strat_key(df).to_numpy()
+        n = df.height
+        indices = np.arange(n)
+        rng.shuffle(indices)
 
-    # Distribute indices to folds in a stratified round-robin manner.
-    folds_indices: List[List[int]] = [[] for _ in range(n_splits)]
-    for label in np.unique(key):
-        label_idx = indices[key[indices] == label]
-        for i, idx in enumerate(label_idx):
-            folds_indices[i % n_splits].append(int(idx))
+        # Distribute indices to folds in a stratified round-robin manner.
+        folds_indices: List[List[int]] = [[] for _ in range(n_splits)]
+        for label in np.unique(key):
+            label_idx = indices[key[indices] == label]
+            for i, idx in enumerate(label_idx):
+                folds_indices[i % n_splits].append(int(idx))
 
     # Ensure every fold has at least one validation sample.
     # For very small datasets (e.g., tiny test mode) the initial stratified

@@ -5,15 +5,15 @@
 # Downscales videos to a target resolution using letterboxing.
 #
 # Usage:
-#   sbatch src/scripts/slurm_stage3_downscaling.sh
-#   sbatch --time=4:00:00 src/scripts/slurm_stage3_downscaling.sh
-#   sbatch --mem=64G src/scripts/slurm_stage3_downscaling.sh
+#   sbatch src/scripts/slurm_stage3_scaling.sh
+#   sbatch --time=4:00:00 src/scripts/slurm_stage3_scaling.sh
+#   sbatch --mem=64G src/scripts/slurm_stage3_scaling.sh
 #
 
 #SBATCH --job-name=fvc_stage3_down
 #SBATCH --account=eecs442f25_class
 #SBATCH --partition=gpu
-#SBATCH --gpus=0  # Downscaling doesn't need GPU
+#SBATCH --gpus=0  # Scaling doesn't need GPU (unless using autoencoder)
 #SBATCH --time=4:00:00
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=4
@@ -91,7 +91,7 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 # ============================================================================
 
 log "=========================================="
-log "STAGE 3: VIDEO DOWNSCALING JOB"
+log "STAGE 3: VIDEO SCALING JOB"
 log "=========================================="
 log "Host:        $(hostname)"
 log "Date:        $(date -Is)"
@@ -153,27 +153,27 @@ log "✅ All prerequisites verified"
 # ============================================================================
 
 log "=========================================="
-log "Starting Stage 3: Video Downscaling"
+log "Starting Stage 3: Video Scaling"
 log "=========================================="
 
 TARGET_SIZE="${FVC_TARGET_SIZE:-224}"
 METHOD="${FVC_DOWNSCALE_METHOD:-resolution}"
-OUTPUT_DIR="${FVC_STAGE3_OUTPUT_DIR:-data/downscaled_videos}"
+OUTPUT_DIR="${FVC_STAGE3_OUTPUT_DIR:-data/scaled_videos}"
 log "Target size: ${TARGET_SIZE}x${TARGET_SIZE}"
 log "Method: $METHOD"
 log "Output directory: $OUTPUT_DIR"
 
 STAGE3_START=$(date +%s)
-LOG_FILE="$ORIG_DIR/logs/stage3_downscaling_${SLURM_JOB_ID:-$$}.log"
+LOG_FILE="$ORIG_DIR/logs/stage3_scaling_${SLURM_JOB_ID:-$$}.log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
 cd "$ORIG_DIR" || exit 1
 PYTHON_CMD=$(which python || echo "python")
 
-log "Running Stage 3 downscaling script..."
+log "Running Stage 3 scaling script..."
 log "Log file: $LOG_FILE"
 
-if "$PYTHON_CMD" "$ORIG_DIR/src/scripts/run_stage3_downscaling.py" \
+if "$PYTHON_CMD" "$ORIG_DIR/src/scripts/run_stage3_scaling.py" \
     --project-root "$ORIG_DIR" \
     --augmented-metadata "${FVC_STAGE1_OUTPUT_DIR:-data/augmented_videos}/augmented_metadata.csv" \
     --method "$METHOD" \
@@ -185,7 +185,7 @@ if "$PYTHON_CMD" "$ORIG_DIR/src/scripts/run_stage3_downscaling.py" \
     STAGE3_DURATION=$((STAGE3_END - STAGE3_START))
     log "✓ Stage 3 completed successfully in ${STAGE3_DURATION}s ($(($STAGE3_DURATION / 60)) minutes)"
     log "Results saved to: $ORIG_DIR/$OUTPUT_DIR"
-    log "Next step: Run Stage 4 with: sbatch src/scripts/slurm_stage4_downscaled_features.sh"
+    log "Next step: Run Stage 4 with: sbatch src/scripts/slurm_stage4_scaled_features.sh"
 else
     STAGE3_END=$(date +%s)
     STAGE3_DURATION=$((STAGE3_END - STAGE3_START))

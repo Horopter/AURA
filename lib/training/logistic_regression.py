@@ -14,6 +14,7 @@ from sklearn.preprocessing import StandardScaler
 import joblib
 
 from lib.features.handcrafted import HandcraftedFeatureExtractor
+from lib.training.feature_preprocessing import remove_collinear_features
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ class LogisticRegressionBaseline:
         self.scaler = StandardScaler()
         self.model = LogisticRegression(max_iter=1000, random_state=42)
         self.is_fitted = False
+        self.feature_indices = None  # Indices of kept features after collinearity removal
+        self.feature_names = None  # Names of kept features
     
     def fit(self, df: pl.DataFrame, project_root: str) -> None:
         """
@@ -60,12 +63,27 @@ class LogisticRegressionBaseline:
         # Aggressive GC after feature extraction
         aggressive_gc(clear_cuda=False)
         
+        # Get feature names from extractor if available
+        feature_names = getattr(self.feature_extractor, 'feature_names', None)
+        if feature_names is None:
+            feature_names = [f"feature_{i}" for i in range(features.shape[1])]
+        
+        # Remove collinear features
+        logger.info("Removing collinear features...")
+        features_filtered, self.feature_indices, self.feature_names = remove_collinear_features(
+            features,
+            feature_names=feature_names,
+            correlation_threshold=0.95,
+            method="correlation"
+        )
+        logger.info(f"Using {len(self.feature_names)} features after collinearity removal")
+        
         # Convert labels to binary (0/1)
         label_map = {label: idx for idx, label in enumerate(sorted(set(labels)))}
         y = np.array([label_map[label] for label in labels])
         
         # Scale features
-        features_scaled = self.scaler.fit_transform(features)
+        features_scaled = self.scaler.fit_transform(features_filtered)
         
         # Train model
         logger.info("Training Logistic Regression...")
@@ -100,6 +118,11 @@ class LogisticRegressionBaseline:
         
         # Aggressive GC after feature extraction
         aggressive_gc(clear_cuda=False)
+        
+        # Apply same feature filtering as during training
+        if self.feature_indices is not None:
+            features = features[:, self.feature_indices]
+            logger.debug(f"Applied feature filtering: {len(self.feature_indices)} features")
         
         # Scale features
         features_scaled = self.scaler.transform(features)

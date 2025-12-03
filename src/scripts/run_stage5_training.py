@@ -2,7 +2,7 @@
 """
 Stage 5: Model Training Script
 
-Trains models using downscaled videos and extracted features.
+Trains models using scaled videos and extracted features.
 
 Usage:
     python src/scripts/run_stage5_training.py
@@ -46,7 +46,7 @@ logging.getLogger("lib.utils").setLevel(logging.DEBUG)
 def main():
     """Run Stage 5: Model Training."""
     parser = argparse.ArgumentParser(
-        description="Stage 5: Train models using downscaled videos and features",
+        description="Stage 5: Train models using scaled videos and features",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -70,10 +70,11 @@ Examples:
         help="Project root directory (default: current working directory)"
     )
     parser.add_argument(
-        "--downscaled-metadata",
+        "--scaled-metadata",
         type=str,
-        default="data/downscaled_videos/downscaled_metadata.csv",
-        help="Path to downscaled metadata CSV from Stage 3 (default: data/downscaled_videos/downscaled_metadata.csv)"
+        default="data/scaled_videos/scaled_metadata.arrow",
+        help="Path to scaled metadata from Stage 3 (default: data/scaled_videos/scaled_metadata.arrow). "
+             "Also supports .parquet and .csv formats."
     )
     parser.add_argument(
         "--features-stage2",
@@ -84,8 +85,9 @@ Examples:
     parser.add_argument(
         "--features-stage4",
         type=str,
-        default="data/features_stage4/features_downscaled_metadata.csv",
-        help="Path to Stage 4 features metadata (default: data/features_stage4/features_downscaled_metadata.csv)"
+        default="data/features_stage4/features_scaled_metadata.arrow",
+        help="Path to Stage 4 features metadata (default: data/features_stage4/features_scaled_metadata.arrow). "
+             "Also supports .parquet and .csv formats."
     )
     parser.add_argument(
         "--model-types",
@@ -117,12 +119,25 @@ Examples:
         action="store_true",
         help="Disable experiment tracking"
     )
+    parser.add_argument(
+        "--train-ensemble",
+        action="store_true",
+        default=False,
+        help="Train ensemble model after individual models (default: False)"
+    )
+    parser.add_argument(
+        "--ensemble-method",
+        type=str,
+        choices=["meta_learner", "weighted_average"],
+        default="meta_learner",
+        help="Ensemble method: 'meta_learner' (train MLP) or 'weighted_average' (simple average) (default: meta_learner)"
+    )
     
     args = parser.parse_args()
     
     # Convert to Path objects
     project_root = Path(args.project_root).resolve()
-    downscaled_metadata_path = project_root / args.downscaled_metadata
+    scaled_metadata_path = project_root / args.scaled_metadata
     features_stage2_path = project_root / args.features_stage2
     features_stage4_path = project_root / args.features_stage4
     output_dir = project_root / args.output_dir
@@ -152,7 +167,7 @@ Examples:
     logger.info("STAGE 5: MODEL TRAINING")
     logger.info("=" * 80)
     logger.info("Project root: %s", project_root)
-    logger.info("Downscaled metadata: %s", downscaled_metadata_path)
+    logger.info("Scaled metadata: %s", scaled_metadata_path)
     logger.info("Features Stage 2: %s", features_stage2_path)
     logger.info("Features Stage 4: %s", features_stage4_path)
     logger.info("Model types: %s", model_types)
@@ -171,11 +186,11 @@ Examples:
     logger.info("Checking prerequisites...")
     logger.info("=" * 80)
     
-    if not downscaled_metadata_path.exists():
-        logger.error("Downscaled metadata file not found: %s", downscaled_metadata_path)
-        logger.error("Please run Stage 3 first: python src/scripts/run_stage3_downscaling.py")
+    if not scaled_metadata_path.exists():
+        logger.error("Scaled metadata file not found: %s", scaled_metadata_path)
+        logger.error("Please run Stage 3 first: python src/scripts/run_stage3_scaling.py")
         return 1
-    logger.info("✓ Downscaled metadata file found: %s", downscaled_metadata_path)
+    logger.info("✓ Scaled metadata file found: %s", scaled_metadata_path)
     
     if not features_stage2_path.exists():
         logger.error("Stage 2 features metadata not found: %s", features_stage2_path)
@@ -185,7 +200,7 @@ Examples:
     
     if not features_stage4_path.exists():
         logger.error("Stage 4 features metadata not found: %s", features_stage4_path)
-        logger.error("Please run Stage 4 first: python src/scripts/run_stage4_downscaled_features.py")
+        logger.error("Please run Stage 4 first: python src/scripts/run_stage4_scaled_features.py")
         return 1
     logger.info("✓ Stage 4 features metadata found: %s", features_stage4_path)
     
@@ -235,14 +250,16 @@ Examples:
     try:
         results = stage5_train_models(
             project_root=str(project_root),
-            downscaled_metadata_path=str(downscaled_metadata_path),
+            scaled_metadata_path=str(scaled_metadata_path),
             features_stage2_path=str(features_stage2_path),
             features_stage4_path=str(features_stage4_path),
             model_types=model_types,
             n_splits=args.n_splits,
             num_frames=args.num_frames,
             output_dir=args.output_dir,
-            use_tracking=not args.no_tracking
+            use_tracking=not args.no_tracking,
+            train_ensemble=args.train_ensemble,
+            ensemble_method=args.ensemble_method
         )
         
         stage_duration = time.time() - stage_start

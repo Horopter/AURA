@@ -185,7 +185,7 @@ Examples:
         
         logger.info("=" * 80)
         logger.info("Next steps:")
-        logger.info("  - Run Stage 3: python src/scripts/run_stage3_downscaling.py")
+        logger.info("  - Run Stage 3: python src/scripts/run_stage3_scaling.py")
         logger.info("  - Or continue with full pipeline: python src/run_new_pipeline.py --skip-stage 1,2")
         logger.info("=" * 80)
         

@@ -2,7 +2,7 @@
 #
 # SLURM Batch Script for Stage 5: Model Training
 #
-# Trains models using downscaled videos and extracted features.
+# Trains models using scaled videos and extracted features.
 #
 # Usage:
 #   sbatch src/scripts/slurm_stage5_training.sh
@@ -168,14 +168,14 @@ if [ ${#WARNING_PACKAGES[@]} -gt 0 ]; then
 fi
 
 # Verify previous stage outputs
-DOWNSCALED_METADATA="${FVC_STAGE3_OUTPUT_DIR:-data/downscaled_videos}/downscaled_metadata.csv"
-DOWNSCALED_METADATA="$ORIG_DIR/$DOWNSCALED_METADATA"
-if [ ! -f "$DOWNSCALED_METADATA" ]; then
-    log "✗ ERROR: Stage 3 output not found: $DOWNSCALED_METADATA"
-    log "  Run Stage 3 first: sbatch src/scripts/slurm_stage3_downscaling.sh"
+SCALED_METADATA="${FVC_STAGE3_OUTPUT_DIR:-data/scaled_videos}/scaled_metadata.arrow"
+SCALED_METADATA="$ORIG_DIR/$SCALED_METADATA"
+if [ ! -f "$SCALED_METADATA" ]; then
+    log "✗ ERROR: Stage 3 output not found: $SCALED_METADATA"
+    log "  Run Stage 3 first: sbatch src/scripts/slurm_stage3_scaling.sh"
     exit 1
 else
-    log "✓ Stage 3 output found: $DOWNSCALED_METADATA"
+    log "✓ Stage 3 output found: $SCALED_METADATA"
 fi
 
 FEATURES_STAGE2="${FVC_STAGE2_OUTPUT_DIR:-data/features_stage2}/features_metadata.csv"
@@ -188,11 +188,11 @@ else
     log "✓ Stage 2 output found: $FEATURES_STAGE2"
 fi
 
-FEATURES_STAGE4="${FVC_STAGE4_OUTPUT_DIR:-data/features_stage4}/features_downscaled_metadata.csv"
+FEATURES_STAGE4="${FVC_STAGE4_OUTPUT_DIR:-data/features_stage4}/features_scaled_metadata.arrow"
 FEATURES_STAGE4="$ORIG_DIR/$FEATURES_STAGE4"
 if [ ! -f "$FEATURES_STAGE4" ]; then
     log "✗ ERROR: Stage 4 output not found: $FEATURES_STAGE4"
-    log "  Run Stage 4 first: sbatch src/scripts/slurm_stage4_downscaled_features.sh"
+    log "  Run Stage 4 first: sbatch src/scripts/slurm_stage4_scaled_features.sh"
     exit 1
 else
     log "✓ Stage 4 output found: $FEATURES_STAGE4"
@@ -236,9 +236,9 @@ log "Log file: $LOG_FILE"
 CMD_ARGS=(
     "$ORIG_DIR/src/scripts/run_stage5_training.py"
     --project-root "$ORIG_DIR"
-    --downscaled-metadata "${FVC_STAGE3_OUTPUT_DIR:-data/downscaled_videos}/downscaled_metadata.csv"
-    --features-stage2 "${FVC_STAGE2_OUTPUT_DIR:-data/features_stage2}/features_metadata.csv"
-    --features-stage4 "${FVC_STAGE4_OUTPUT_DIR:-data/features_stage4}/features_downscaled_metadata.csv"
+    --scaled-metadata "${FVC_STAGE3_OUTPUT_DIR:-data/scaled_videos}/scaled_metadata.arrow"
+    --features-stage2 "${FVC_STAGE2_OUTPUT_DIR:-data/features_stage2}/features_metadata.arrow"
+    --features-stage4 "${FVC_STAGE4_OUTPUT_DIR:-data/features_stage4}/features_scaled_metadata.arrow"
     --model-types "${MODELS_ARRAY[@]}"
     --n-splits "$N_SPLITS"
     --num-frames "$NUM_FRAMES"

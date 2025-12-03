@@ -1,11 +1,12 @@
 """
-Extract features from downscaled videos.
+Extract features from scaled videos.
 
-Extracts features that are detectable after downscaling, focusing on:
+Extracts features that are detectable after scaling (downscaling or upscaling), focusing on:
 - Edge preservation metrics
 - Texture uniformity
 - Compression artifact visibility
 - Color consistency
+- Scaling direction indicators (is_upscaled, is_downscaled)
 """
 
 from __future__ import annotations
@@ -26,25 +27,25 @@ from lib.features.handcrafted import HandcraftedFeatureExtractor
 logger = logging.getLogger(__name__)
 
 
-def extract_downscaled_features(
+def extract_scaled_features(
     video_path: str,
     num_frames: int = 5
 ) -> dict:
     """
-    Extract features specific to downscaled videos.
+    Extract features specific to scaled videos.
     
-    Focuses on features that are detectable after downscaling:
+    Focuses on features that are detectable after scaling:
     - Edge preservation metrics
     - Texture uniformity
     - Compression artifact visibility
     - Color consistency
     
     Args:
-        video_path: Path to downscaled video file
+        video_path: Path to scaled video file
         num_frames: Number of frames to sample
     
     Returns:
-        Dictionary of downscaled-specific features
+        Dictionary of scaled-video-specific features
     """
     container = None
     try:
@@ -67,7 +68,7 @@ def extract_downscaled_features(
                 if frame_count in frame_indices:
                     frame_array = frame.to_ndarray(format='rgb24')
                     
-                    # Extract downscaled-specific features
+                    # Extract scaled-video-specific features
                     features = {}
                     
                     # Edge preservation (Canny edges)
@@ -99,6 +100,10 @@ def extract_downscaled_features(
                     features["compression_artifacts"] = float(blockiness / ((h // block_size) * (w // block_size)))
                     
                     all_features.append(features)
+                    
+                    # Aggressive GC after each frame extraction
+                    del frame_array, gray, edges, local_means
+                    aggressive_gc(clear_cuda=False)
                 
                 frame_count += 1
                 if frame_count >= total_frames or len(all_features) >= num_frames:
@@ -119,7 +124,7 @@ def extract_downscaled_features(
         return aggregated
         
     except Exception as e:
-        logger.error(f"Failed to extract downscaled features from {video_path}: {e}")
+        logger.error(f"Failed to extract scaled video features from {video_path}: {e}")
         return {}
     finally:
         if container is not None:
@@ -130,36 +135,45 @@ def extract_downscaled_features(
         aggressive_gc(clear_cuda=False)
 
 
-def stage4_extract_downscaled_features(
+def stage4_extract_scaled_features(
     project_root: str,
-    downscaled_metadata_path: str,
+    scaled_metadata_path: str,
     output_dir: str = "data/features_stage4",
     num_frames: int = 5
 ) -> pl.DataFrame:
     """
-    Stage 4: Extract additional features from downscaled videos.
+    Stage 4: Extract additional features from scaled videos.
+    
+    Extracts features specific to scaled videos and includes binary features:
+    - is_upscaled: 1 if video was upscaled, 0 otherwise
+    - is_downscaled: 1 if video was downscaled, 0 otherwise
     
     Args:
         project_root: Project root directory
-        downscaled_metadata_path: Path to downscaled metadata CSV
+        scaled_metadata_path: Path to scaled metadata (from Stage 3)
         output_dir: Directory to save features
         num_frames: Number of frames to sample per video
     
     Returns:
-        DataFrame with feature metadata
+        DataFrame with feature metadata (includes is_upscaled and is_downscaled features)
     """
     project_root = Path(project_root)
     output_dir = project_root / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Load downscaled metadata
-    logger.info("Stage 4: Loading downscaled metadata...")
-    if not Path(downscaled_metadata_path).exists():
-        logger.error(f"Downscaled metadata not found: {downscaled_metadata_path}")
+    # Load scaled metadata (support both CSV and Arrow/Parquet)
+    logger.info("Stage 4: Loading scaled metadata...")
+    if not Path(scaled_metadata_path).exists():
+        logger.error(f"Scaled metadata not found: {scaled_metadata_path}")
         return pl.DataFrame()
     
-    df = pl.read_csv(downscaled_metadata_path)
-    logger.info(f"Stage 4: Processing {df.height} downscaled videos")
+    # Try Arrow/Parquet first, fallback to CSV
+    metadata_path_obj = Path(scaled_metadata_path)
+    if metadata_path_obj.suffix in ['.arrow', '.parquet']:
+        df = pl.read_ipc(metadata_path_obj) if metadata_path_obj.suffix == '.arrow' else pl.read_parquet(metadata_path_obj)
+    else:
+        df = pl.read_csv(scaled_metadata_path)
+    logger.info(f"Stage 4: Processing {df.height} scaled videos")
     
     feature_rows = []
     
@@ -167,6 +181,10 @@ def stage4_extract_downscaled_features(
         row = df.row(idx, named=True)
         video_rel = row["video_path"]
         label = row["label"]
+        
+        # Get original dimensions if available
+        original_width = row.get("original_width")
+        original_height = row.get("original_height")
         
         try:
             video_path = resolve_video_path(video_rel, project_root)
@@ -178,17 +196,60 @@ def stage4_extract_downscaled_features(
             if idx % 10 == 0:
                 log_memory_stats(f"Stage 4: processing video {idx + 1}/{df.height}")
             
-            # Extract downscaled-specific features
-            features = extract_downscaled_features(video_path, num_frames)
+            # Get scaled video dimensions
+            scaled_width = None
+            scaled_height = None
+            try:
+                container = av.open(video_path)
+                stream = container.streams.video[0]
+                scaled_width = stream.width
+                scaled_height = stream.height
+                container.close()
+            except Exception as e:
+                logger.debug(f"Could not get scaled dimensions: {e}")
+            
+            # Calculate scaling direction features
+            is_upscaled = 0
+            is_downscaled = 0
+            if original_width is not None and original_height is not None and scaled_width is not None and scaled_height is not None:
+                original_max_dim = max(original_width, original_height)
+                scaled_max_dim = max(scaled_width, scaled_height)
+                
+                if scaled_max_dim > original_max_dim:
+                    is_upscaled = 1
+                elif scaled_max_dim < original_max_dim:
+                    is_downscaled = 1
+                # If equal, both remain 0 (no scaling)
+            
+            # Extract scaled-video-specific features
+            features = extract_scaled_features(video_path, num_frames)
             
             if not features:
                 logger.warning(f"No features extracted from {video_path}")
                 continue
             
-            # Save features as .npy
+            # Add scaling direction features
+            features["is_upscaled"] = float(is_upscaled)
+            features["is_downscaled"] = float(is_downscaled)
+            
+            # Save features as Arrow/Parquet (better than .npy)
             video_id = Path(video_path).stem
-            feature_path = output_dir / f"{video_id}_downscaled_features.npy"
-            np.save(str(feature_path), features)
+            feature_path = output_dir / f"{video_id}_scaled_features.parquet"
+            
+            # Convert features dict to Arrow table and save as Parquet
+            try:
+                import pyarrow as pa
+                import pyarrow.parquet as pq
+                
+                # Convert dict to columnar format (each key becomes a column with single value)
+                feature_dict = {k: [v] for k, v in features.items()}
+                table = pa.Table.from_pydict(feature_dict)
+                pq.write_table(table, str(feature_path), compression='snappy')
+            except ImportError:
+                # Fallback to numpy if pyarrow not available
+                logger.warning("PyArrow not available, falling back to .npy format")
+                feature_path = output_dir / f"{video_id}_scaled_features.npy"
+                np.save(str(feature_path), features)
             
             # Create metadata row
             feature_row = {
@@ -212,9 +273,16 @@ def stage4_extract_downscaled_features(
     # Create DataFrame
     features_df = pl.DataFrame(feature_rows)
     
-    # Save metadata
-    metadata_path = output_dir / "features_downscaled_metadata.csv"
-    features_df.write_csv(str(metadata_path))
+    # Save metadata as Arrow IPC (faster and type-safe)
+    metadata_path = output_dir / "features_scaled_metadata.arrow"
+    try:
+        features_df.write_ipc(str(metadata_path))
+        logger.debug(f"Saved metadata as Arrow IPC: {metadata_path}")
+    except Exception as e:
+        # Fallback to Parquet if IPC fails
+        logger.warning(f"Arrow IPC write failed, using Parquet: {e}")
+        metadata_path = output_dir / "features_scaled_metadata.parquet"
+        features_df.write_parquet(str(metadata_path))
     logger.info(f"✓ Stage 4 complete: Saved features to {output_dir}")
     logger.info(f"✓ Stage 4: Extracted features from {len(feature_rows)} videos")
     

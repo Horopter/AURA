@@ -4,9 +4,9 @@ New 5-Stage Pipeline Runner
 
 Stage 1: Augment videos (10 augmentations per video) → 11N videos
 Stage 2: Extract handcrafted features from all 11N videos → M features
-Stage 3: Downscale videos → 11N downscaled videos
-Stage 4: Extract additional features from downscaled videos → P features
-Stage 5: Train models using downscaled videos + M + P features
+Stage 3: Scale videos → 11N scaled videos (max dimension = target_size)
+Stage 4: Extract additional features from scaled videos → P features (includes is_upscaled, is_downscaled)
+Stage 5: Train models using scaled videos + M + P features
 """
 
 from __future__ import annotations
@@ -22,9 +22,10 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from lib.augmentation import stage1_augment_videos
-from lib.features import stage2_extract_features, stage4_extract_downscaled_features
-from lib.downscaling import stage3_downscale_videos
+from lib.features import stage2_extract_features, stage4_extract_scaled_features
+from lib.scaling import stage3_scale_videos
 from lib.training import stage5_train_models
+from lib.utils.paths import find_metadata_file
 
 # Setup extensive logging
 logging.basicConfig(
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("lib").setLevel(logging.DEBUG)
 logging.getLogger("lib.augmentation").setLevel(logging.DEBUG)
 logging.getLogger("lib.features").setLevel(logging.DEBUG)
-logging.getLogger("lib.downscaling").setLevel(logging.DEBUG)
+logging.getLogger("lib.scaling").setLevel(logging.DEBUG)
 logging.getLogger("lib.training").setLevel(logging.DEBUG)
 logging.getLogger("lib.data").setLevel(logging.DEBUG)
 logging.getLogger("lib.models").setLevel(logging.DEBUG)
@@ -53,6 +54,8 @@ def main():
     parser.add_argument("--only-stage", type=int, nargs="+", default=[], help="Only run these stages (1-5)")
     parser.add_argument("--model-types", type=str, nargs="+", default=["logistic_regression", "svm"], help="Models to train in Stage 5")
     parser.add_argument("--n-splits", type=int, default=5, help="Number of k-fold splits")
+    parser.add_argument("--train-ensemble", action="store_true", default=False, help="Train ensemble model after individual models")
+    parser.add_argument("--ensemble-method", type=str, choices=["meta_learner", "weighted_average"], default="meta_learner", help="Ensemble method")
     
     args = parser.parse_args()
     
@@ -97,13 +100,23 @@ def main():
         stage1_duration = time.time() - stage1_start
         logger.info("Stage 1 completed in %.2f seconds", stage1_duration)
         logger.debug("Stage 1 output shape: %s", stage1_df.shape if hasattr(stage1_df, 'shape') else "N/A")
-        stage1_metadata_path = project_root / "data" / "augmented_videos" / "augmented_metadata.csv"
-        logger.debug("Stage 1 metadata saved to: %s", stage1_metadata_path)
+        # Find metadata file (supports .arrow, .parquet, .csv)
+        stage1_metadata_path = find_metadata_file(
+            project_root / "data" / "augmented_videos",
+            "augmented_metadata"
+        )
+        if stage1_metadata_path:
+            logger.debug("Stage 1 metadata saved to: %s", stage1_metadata_path)
+        else:
+            logger.warning("Stage 1 metadata file not found")
     else:
         logger.info("Skipping Stage 1")
-        stage1_metadata_path = project_root / "data" / "augmented_videos" / "augmented_metadata.csv"
-        if not stage1_metadata_path.exists():
-            logger.error("Stage 1 metadata not found: %s", stage1_metadata_path)
+        stage1_metadata_path = find_metadata_file(
+            project_root / "data" / "augmented_videos",
+            "augmented_metadata"
+        )
+        if not stage1_metadata_path:
+            logger.error("Stage 1 metadata not found in: %s", project_root / "data" / "augmented_videos")
             return
         logger.debug("Using existing Stage 1 metadata: %s", stage1_metadata_path)
     
@@ -127,51 +140,70 @@ def main():
         stage2_duration = time.time() - stage2_start
         logger.info("Stage 2 completed in %.2f seconds", stage2_duration)
         logger.debug("Stage 2 output shape: %s", stage2_df.shape if hasattr(stage2_df, 'shape') else "N/A")
-        stage2_metadata_path = project_root / "data" / "features_stage2" / "features_metadata.csv"
-        logger.debug("Stage 2 metadata saved to: %s", stage2_metadata_path)
+        stage2_metadata_path = find_metadata_file(
+            project_root / "data" / "features_stage2",
+            "features_metadata"
+        )
+        if stage2_metadata_path:
+            logger.debug("Stage 2 metadata saved to: %s", stage2_metadata_path)
+        else:
+            logger.warning("Stage 2 metadata file not found")
     else:
         logger.info("Skipping Stage 2")
-        stage2_metadata_path = project_root / "data" / "features_stage2" / "features_metadata.csv"
-        if not stage2_metadata_path.exists():
-            logger.error("Stage 2 metadata not found: %s", stage2_metadata_path)
+        stage2_metadata_path = find_metadata_file(
+            project_root / "data" / "features_stage2",
+            "features_metadata"
+        )
+        if not stage2_metadata_path:
+            logger.error("Stage 2 metadata not found in: %s", project_root / "data" / "features_stage2")
             return
         logger.debug("Using existing Stage 2 metadata: %s", stage2_metadata_path)
     
-    # Stage 3: Downscale videos
+    # Stage 3: Scale videos
     if 3 in stages_to_run:
         logger.info("\n" + "="*80)
-        logger.info("STAGE 3: DOWNSCALE VIDEOS")
+        logger.info("STAGE 3: SCALE VIDEOS")
         logger.info("="*80)
         logger.debug("Input metadata: %s", stage1_metadata_path)
-        logger.debug("Downscaling method: resolution")
-        logger.debug("Target size: (224, 224)")
-        logger.debug("Output directory: %s", project_root / "data" / "downscaled_videos")
+        logger.debug("Scaling method: resolution")
+        logger.debug("Target max dimension: 256 pixels")
+        logger.debug("Output directory: %s", project_root / "data" / "scaled_videos")
         import time
         stage3_start = time.time()
-        stage3_df = stage3_downscale_videos(
+        stage3_df = stage3_scale_videos(
             project_root=str(project_root),
             augmented_metadata_path=str(stage1_metadata_path),
-            output_dir="data/downscaled_videos",
+            output_dir="data/scaled_videos",
             method="resolution",  # or "autoencoder"
-            target_size=(224, 224)
+            target_size=224,
+            chunk_size=250  # Optimized for 80GB RAM
         )
         stage3_duration = time.time() - stage3_start
         logger.info("Stage 3 completed in %.2f seconds", stage3_duration)
         logger.debug("Stage 3 output shape: %s", stage3_df.shape if hasattr(stage3_df, 'shape') else "N/A")
-        stage3_metadata_path = project_root / "data" / "downscaled_videos" / "downscaled_metadata.csv"
-        logger.debug("Stage 3 metadata saved to: %s", stage3_metadata_path)
+        stage3_metadata_path = find_metadata_file(
+            project_root / "data" / "scaled_videos",
+            "scaled_metadata"
+        )
+        if stage3_metadata_path:
+            logger.debug("Stage 3 metadata saved to: %s", stage3_metadata_path)
+        else:
+            logger.warning("Stage 3 metadata file not found")
     else:
         logger.info("Skipping Stage 3")
-        stage3_metadata_path = project_root / "data" / "downscaled_videos" / "downscaled_metadata.csv"
-        if not stage3_metadata_path.exists():
-            logger.error("Stage 3 metadata not found: %s", stage3_metadata_path)
+        stage3_metadata_path = find_metadata_file(
+            project_root / "data" / "scaled_videos",
+            "scaled_metadata"
+        )
+        if not stage3_metadata_path:
+            logger.error("Stage 3 metadata not found in: %s", project_root / "data" / "scaled_videos")
             return
         logger.debug("Using existing Stage 3 metadata: %s", stage3_metadata_path)
     
-    # Stage 4: Extract features from downscaled videos
+    # Stage 4: Extract features from scaled videos
     if 4 in stages_to_run:
         logger.info("\n" + "="*80)
-        logger.info("STAGE 4: EXTRACT FEATURES FROM DOWNSCALED VIDEOS (P features)")
+        logger.info("STAGE 4: EXTRACT FEATURES FROM SCALED VIDEOS (P features)")
         logger.info("="*80)
         logger.debug("Input metadata: %s", stage3_metadata_path)
         num_frames = 6  # Optimized for 80GB RAM
@@ -179,22 +211,31 @@ def main():
         logger.debug("Output directory: %s", project_root / "data" / "features_stage4")
         import time
         stage4_start = time.time()
-        stage4_df = stage4_extract_downscaled_features(
+        stage4_df = stage4_extract_scaled_features(
             project_root=str(project_root),
-            downscaled_metadata_path=str(stage3_metadata_path),
+            scaled_metadata_path=str(stage3_metadata_path),
             num_frames=num_frames,
             output_dir="data/features_stage4"
         )
         stage4_duration = time.time() - stage4_start
         logger.info("Stage 4 completed in %.2f seconds", stage4_duration)
         logger.debug("Stage 4 output shape: %s", stage4_df.shape if hasattr(stage4_df, 'shape') else "N/A")
-        stage4_metadata_path = project_root / "data" / "features_stage4" / "features_downscaled_metadata.csv"
-        logger.debug("Stage 4 metadata saved to: %s", stage4_metadata_path)
+        stage4_metadata_path = find_metadata_file(
+            project_root / "data" / "features_stage4",
+            "features_scaled_metadata"
+        )
+        if stage4_metadata_path:
+            logger.debug("Stage 4 metadata saved to: %s", stage4_metadata_path)
+        else:
+            logger.warning("Stage 4 metadata file not found")
     else:
         logger.info("Skipping Stage 4")
-        stage4_metadata_path = project_root / "data" / "features_stage4" / "features_downscaled_metadata.csv"
-        if not stage4_metadata_path.exists():
-            logger.error("Stage 4 metadata not found: %s", stage4_metadata_path)
+        stage4_metadata_path = find_metadata_file(
+            project_root / "data" / "features_stage4",
+            "features_scaled_metadata"
+        )
+        if not stage4_metadata_path:
+            logger.error("Stage 4 metadata not found in: %s", project_root / "data" / "features_stage4")
             return
         logger.debug("Using existing Stage 4 metadata: %s", stage4_metadata_path)
     
@@ -203,7 +244,7 @@ def main():
         logger.info("\n" + "="*80)
         logger.info("STAGE 5: TRAIN MODELS")
         logger.info("="*80)
-        logger.debug("Downscaled metadata: %s", stage3_metadata_path)
+        logger.debug("Scaled metadata: %s", stage3_metadata_path)
         logger.debug("Features Stage 2: %s", stage2_metadata_path)
         logger.debug("Features Stage 4: %s", stage4_metadata_path)
         num_frames = 6  # Optimized for 80GB RAM
@@ -215,14 +256,16 @@ def main():
         stage5_start = time.time()
         results = stage5_train_models(
             project_root=str(project_root),
-            downscaled_metadata_path=str(stage3_metadata_path),
+            scaled_metadata_path=str(stage3_metadata_path),
             features_stage2_path=str(stage2_metadata_path),
             features_stage4_path=str(stage4_metadata_path),
             model_types=args.model_types,
             n_splits=args.n_splits,
             num_frames=num_frames,
             output_dir="data/training_results",
-            use_tracking=True
+            use_tracking=True,
+            train_ensemble=args.train_ensemble,
+            ensemble_method=args.ensemble_method
         )
         stage5_duration = time.time() - stage5_start
         logger.info("Stage 5 completed in %.2f seconds", stage5_duration)

@@ -64,96 +64,18 @@ def augment_video(
     if chunk_size is None:
         chunk_size = 250
     
-    # Always count frames manually for reliability (metadata can be corrupted)
-    container = None
-    total_frames = 0
-    fps = 30.0
-    MAX_REASONABLE_FRAMES = 10_000_000
+    # Use cached metadata to avoid duplicate frame counting
+    from lib.utils.video_cache import get_video_metadata
     
-    try:
-        container = av.open(video_path)
-        stream = container.streams.video[0]
-        fps = float(stream.average_rate) if stream.average_rate else 30.0
-        
-        # Get metadata values for sanity check (but don't trust them)
-        stream_frames_metadata = stream.frames if stream.frames > 0 else 0
-        duration_frames_metadata = 0
-        if stream.duration is not None and stream.time_base is not None:
-            try:
-                duration_seconds = float(stream.duration * stream.time_base)
-                duration_frames_metadata = int(duration_seconds * fps)
-            except Exception as e:
-                logger.debug(f"Could not calculate frames from duration: {e}")
-        
-        # Always count frames manually for accuracy
-        logger.debug(f"Counting frames manually for reliable frame count...")
-        frame_count = 0
-        for packet in container.demux(stream):
-            for frame in packet.decode():
-                frame_count += 1
-                # Safety limit: stop counting if we exceed reasonable limit
-                if frame_count > MAX_REASONABLE_FRAMES:
-                    logger.error(f"Frame count exceeds {MAX_REASONABLE_FRAMES}, stopping count")
-                    break
-            if frame_count > MAX_REASONABLE_FRAMES:
-                break
-        # Free any temporary decoding buffers as soon as frame counting is done
-        aggressive_gc(clear_cuda=False)
-        
-        total_frames = frame_count
-        
-        # Sanity check: compare manual count with metadata
-        if stream_frames_metadata > 0 or duration_frames_metadata > 0:
-            metadata_count = stream_frames_metadata if stream_frames_metadata > 0 else duration_frames_metadata
-            if metadata_count > 0:
-                ratio = max(total_frames, metadata_count) / min(total_frames, metadata_count) if min(total_frames, metadata_count) > 0 else 1.0
-                if ratio > 1.5:  # More than 50% difference
-                    logger.warning(
-                        f"Metadata frame count ({metadata_count}) differs significantly from manual count ({total_frames}), "
-                        f"using manual count (ratio: {ratio:.2f})"
-                    )
-                else:
-                    logger.debug(f"Manual count ({total_frames}) matches metadata ({metadata_count})")
-        
-        container.close()
-        container = None
-        logger.info(f"Manually counted {total_frames} frames (fps: {fps:.2f})")
-        
-    except Exception as e:
-        logger.error(f"Failed to count frames manually: {e}")
-        aggressive_gc(clear_cuda=False)
-        if container is not None:
-            try:
-                container.close()
-            except Exception:
-                pass
-        container = None
-        
-        # Last resort: try loading first chunk to estimate
-        logger.warning(f"Trying to estimate from first chunk...")
-        try:
-            original_frames, fps = load_frames(video_path, max_frames=chunk_size, start_frame=0)
-            if not original_frames:
-                logger.error(f"Could not load any frames from {video_path}")
-                return []
-            total_frames = len(original_frames)
-            # If we got exactly chunk_size frames, there might be more
-            if len(original_frames) == chunk_size:
-                logger.warning(f"Video might have more than {chunk_size} frames, but exact count unknown")
-                # Try to get a better estimate by loading more
-                try:
-                    more_frames, _ = load_frames(video_path, max_frames=chunk_size * 10, start_frame=0)
-                    if len(more_frames) > len(original_frames):
-                        total_frames = len(more_frames)
-                        logger.info(f"Loaded {total_frames} frames, assuming this is the total")
-                except Exception:
-                    pass
-        except Exception as e2:
-            logger.error(f"Failed to estimate from first chunk: {e2}")
-            aggressive_gc(clear_cuda=False)
-            return []
+    metadata = get_video_metadata(video_path, use_cache=True)
+    total_frames = metadata['total_frames']
+    fps = metadata['fps']
     
-    logger.info(f"Video has {total_frames} frames, processing in chunks of {chunk_size}")
+    if total_frames == 0:
+        logger.error(f"Video has no frames: {video_path}")
+        return []
+    
+    logger.info(f"Video has {total_frames} frames (fps: {fps:.2f}), processing in chunks of {chunk_size}")
     
     # Generate deterministic seed from video path
     video_path_str = str(video_path)
@@ -480,18 +402,18 @@ def _reconstruct_metadata_from_files(
                     'is_original': True
                 })
     
-    # Write metadata CSV (append if file exists, write if new)
-    mode = 'a' if metadata_path.exists() else 'w'
-    if mode == 'w':
-        with open(metadata_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(["video_path", "label", "original_video", "augmentation_idx", "is_original"])
-    
-    # Append entries (avoid duplicates by checking existing entries if appending)
+    # Load existing metadata if it exists (support Arrow/Parquet/CSV)
     existing_entries = set()
-    if mode == 'a' and metadata_path.exists():
+    existing_df = None
+    if metadata_path.exists():
         try:
-            existing_df = pl.read_csv(str(metadata_path))
+            metadata_path_obj = Path(metadata_path)
+            if metadata_path_obj.suffix == '.arrow':
+                existing_df = pl.read_ipc(metadata_path_obj)
+            elif metadata_path_obj.suffix == '.parquet':
+                existing_df = pl.read_parquet(metadata_path_obj)
+            else:
+                existing_df = pl.read_csv(str(metadata_path))
             for row in existing_df.iter_rows(named=True):
                 existing_entries.add((
                     row.get('video_path', ''),
@@ -501,20 +423,36 @@ def _reconstruct_metadata_from_files(
         except Exception:
             pass
     
+    # Collect new entries
     new_entries = []
-    with open(metadata_path, mode, newline='') as f:
-        writer = csv.writer(f)
-        for entry in entries:
-            entry_key = (entry['video_path'], entry['original_video'], entry['augmentation_idx'])
-            if entry_key not in existing_entries:
-                writer.writerow([
-                    entry['video_path'],
-                    entry['label'],
-                    entry['original_video'],
-                    entry['augmentation_idx'],
-                    entry['is_original']
-                ])
-                new_entries.append(entry)
+    for entry in entries:
+        entry_key = (entry['video_path'], entry['original_video'], entry['augmentation_idx'])
+        if entry_key not in existing_entries:
+            new_entries.append(entry)
+    
+    # Append new entries to existing DataFrame or create new one
+    if new_entries:
+        new_df = pl.DataFrame(new_entries)
+        if existing_df is not None and existing_df.height > 0:
+            combined_df = pl.concat([existing_df, new_df])
+        else:
+            combined_df = new_df
+        
+        # Save as Arrow IPC (preferred), fallback to Parquet
+        metadata_path_arrow = metadata_path.with_suffix('.arrow')
+        try:
+            combined_df.write_ipc(str(metadata_path_arrow))
+            # Remove old CSV/Parquet if it exists
+            if metadata_path.exists() and metadata_path.suffix != '.arrow':
+                metadata_path.unlink()
+            logger.debug(f"Saved metadata as Arrow IPC: {metadata_path_arrow}")
+        except Exception as e:
+            logger.warning(f"Arrow IPC write failed, using Parquet: {e}")
+            metadata_path_parquet = metadata_path.with_suffix('.parquet')
+            combined_df.write_parquet(str(metadata_path_parquet))
+            # Remove old CSV/Arrow if it exists
+            if metadata_path.exists() and metadata_path.suffix != '.parquet':
+                metadata_path.unlink()
                 existing_entries.add(entry_key)
     
     if new_entries:
@@ -591,15 +529,45 @@ def stage1_augment_videos(
     logger.info(f"Stage 1: Output directory: {output_dir}")
     logger.info(f"Stage 1: Delete existing augmentations: {delete_existing}")
     
-    # Use incremental CSV writing to avoid memory accumulation
-    metadata_path = output_dir / "augmented_metadata.csv"
+    # Use Arrow IPC for metadata (faster and type-safe)
+    # Check for existing CSV file and migrate it to Arrow format
+    metadata_path_arrow = output_dir / "augmented_metadata.arrow"
+    metadata_path_csv = output_dir / "augmented_metadata.csv"
+    metadata_path_parquet = output_dir / "augmented_metadata.parquet"
     
-    # Load existing metadata if it exists and we're not deleting
+    # Migrate CSV to Arrow if CSV exists and Arrow doesn't
+    if metadata_path_csv.exists() and not metadata_path_arrow.exists() and not metadata_path_parquet.exists():
+        logger.info("Stage 1: Found existing CSV metadata, migrating to Arrow format...")
+        try:
+            csv_df = pl.read_csv(str(metadata_path_csv))
+            csv_df.write_ipc(str(metadata_path_arrow))
+            logger.info(f"✓ Migrated {csv_df.height} entries from CSV to Arrow format")
+            # Keep CSV as backup for now (can delete later if needed)
+            logger.debug(f"CSV file kept as backup: {metadata_path_csv}")
+        except Exception as e:
+            logger.warning(f"Failed to migrate CSV to Arrow: {e}, will use CSV format")
+    
+    # Determine which metadata file to use (prefer Arrow, then Parquet, then CSV)
+    metadata_path = None
+    if metadata_path_arrow.exists():
+        metadata_path = metadata_path_arrow
+    elif metadata_path_parquet.exists():
+        metadata_path = metadata_path_parquet
+    elif metadata_path_csv.exists():
+        metadata_path = metadata_path_csv
+    
+    # Load existing metadata if it exists and we're not deleting (support CSV/Arrow/Parquet)
     existing_metadata = None
     existing_video_ids_with_all_augs = set()  # Videos that have all augmentations
-    if metadata_path.exists() and not delete_existing:
+    if metadata_path and metadata_path.exists() and not delete_existing:
         try:
-            existing_metadata = pl.read_csv(str(metadata_path))
+            metadata_path_obj = Path(metadata_path)
+            if metadata_path_obj.suffix == '.arrow':
+                existing_metadata = pl.read_ipc(metadata_path_obj)
+            elif metadata_path_obj.suffix == '.parquet':
+                existing_metadata = pl.read_parquet(metadata_path_obj)
+            else:
+                existing_metadata = pl.read_csv(str(metadata_path))
             # Count augmentations per video to find which have all augmentations
             video_aug_counts = {}
             for row in existing_metadata.iter_rows(named=True):
@@ -647,23 +615,64 @@ def stage1_augment_videos(
         logger.info(f"Stage 1: Will delete augmentations for {len(video_ids_in_range)} videos in range")
         
         # Delete augmented video files only for videos in this range
+        # SAFETY: Only delete files matching our augmentation pattern in our output directory
+        # CRITICAL: Never delete files from other stages (e.g., scaled videos, features, etc.)
         aug_files_deleted = 0
         for aug_file in output_dir.glob("*_aug*.mp4"):
-            # Extract video_id from filename (format: {video_id}_aug{idx}.mp4)
+            # SAFETY CHECK: Ensure we're only deleting Stage 1 augmentation files
+            # Pattern must be: {video_id}_aug{idx}.mp4 (exactly, no other patterns)
             aug_filename = aug_file.stem  # Remove .mp4 extension
-            if "_aug" in aug_filename:
-                file_video_id = aug_filename.split("_aug")[0]
-                if file_video_id in video_ids_in_range:
+            if "_aug" not in aug_filename:
+                logger.warning(f"SKIPPING deletion - not an augmentation file: {aug_file.name}")
+                continue
+            
+            # Extract video_id from filename (format: {video_id}_aug{idx}.mp4)
+            parts = aug_filename.split("_aug")
+            if len(parts) != 2:
+                logger.warning(f"SKIPPING deletion - invalid augmentation filename format: {aug_file.name}")
+                continue
+            
+            file_video_id = parts[0]
+            try:
+                aug_idx = int(parts[1])  # Should be a number
+            except ValueError:
+                logger.warning(f"SKIPPING deletion - invalid augmentation index: {aug_file.name}")
+                continue
+            
+            # Only delete if this video_id is in our processing range
+            if file_video_id in video_ids_in_range:
+                # SAFETY: Final check - ensure filename matches expected pattern exactly
+                expected_pattern = f"{file_video_id}_aug{aug_idx}.mp4"
+                if aug_file.name == expected_pattern:
                     aug_file.unlink()
                     aug_files_deleted += 1
-                    logger.debug(f"Deleted existing augmentation: {aug_file}")
+                    logger.debug(f"Deleted existing augmentation: {aug_file.name}")
+                else:
+                    logger.warning(f"SKIPPING deletion - filename mismatch: {aug_file.name} != {expected_pattern}")
         
         logger.info(f"Stage 1: Deleted {aug_files_deleted} existing augmentation files in range")
         
         # Delete metadata entries for videos in this range (if metadata exists)
-        if metadata_path.exists():
+        # Support CSV/Arrow/Parquet
+        metadata_paths = [
+            output_dir / "augmented_metadata.arrow",
+            output_dir / "augmented_metadata.parquet",
+            output_dir / "augmented_metadata.csv"
+        ]
+        metadata_path_to_use = None
+        for mp in metadata_paths:
+            if mp.exists():
+                metadata_path_to_use = mp
+                break
+        
+        if metadata_path_to_use and metadata_path_to_use.exists():
             try:
-                existing_metadata = pl.read_csv(str(metadata_path))
+                if metadata_path_to_use.suffix == '.arrow':
+                    existing_metadata = pl.read_ipc(metadata_path_to_use)
+                elif metadata_path_to_use.suffix == '.parquet':
+                    existing_metadata = pl.read_parquet(metadata_path_to_use)
+                else:
+                    existing_metadata = pl.read_csv(str(metadata_path_to_use))
                 # Filter out entries for videos in this range
                 rows_to_keep = []
                 for row in existing_metadata.iter_rows(named=True):
@@ -683,8 +692,21 @@ def stage1_augment_videos(
                     # Create new DataFrame from kept rows
                     if rows_to_keep:
                         new_metadata = pl.DataFrame(rows_to_keep)
-                        new_metadata.write_csv(str(metadata_path))
-                        logger.info(f"Stage 1: Updated metadata file, kept {len(rows_to_keep)} entries")
+                        # Save as Arrow IPC (preferred)
+                        new_metadata_path = output_dir / "augmented_metadata.arrow"
+                        try:
+                            new_metadata.write_ipc(str(new_metadata_path))
+                            # Remove old file if different format
+                            if metadata_path_to_use != new_metadata_path and metadata_path_to_use.exists():
+                                metadata_path_to_use.unlink()
+                            logger.info(f"Stage 1: Updated metadata file, kept {len(rows_to_keep)} entries")
+                        except Exception as e:
+                            logger.warning(f"Arrow IPC write failed, using Parquet: {e}")
+                            new_metadata_path = output_dir / "augmented_metadata.parquet"
+                            new_metadata.write_parquet(str(new_metadata_path))
+                            if metadata_path_to_use != new_metadata_path and metadata_path_to_use.exists():
+                                metadata_path_to_use.unlink()
+                            logger.info(f"Stage 1: Updated metadata file, kept {len(rows_to_keep)} entries")
                     else:
                         # No entries left, delete metadata file
                         metadata_path.unlink()
@@ -696,14 +718,9 @@ def stage1_augment_videos(
         
         logger.info("Stage 1: Range-specific cleanup complete")
     
-    # Open metadata file for writing (append if file exists, write if new)
-    # Always append if file exists to preserve entries from other ranges, even when delete_existing=True
-    mode = 'a' if metadata_path.exists() else 'w'
-    if mode == 'w':
-        with open(metadata_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(["video_path", "label", "original_video", "augmentation_idx", "is_original"])
-    
+    # Prepare metadata rows list (we'll write to Arrow/Parquet at the end)
+    # For backward compatibility, we'll collect all new rows and append to existing metadata
+    metadata_rows = []
     total_videos_processed = 0
     
     # Process each video one at a time
@@ -763,7 +780,6 @@ def stage1_augment_videos(
                 original_output.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(video_path, original_output)
             
-            # Write original video metadata immediately to CSV (only if not already exists in metadata)
             # Check if original is already in metadata
             original_already_in_metadata = False
             if existing_metadata is not None:
@@ -773,15 +789,13 @@ def stage1_augment_videos(
                         break
             
             if not original_already_in_metadata:
-                with open(metadata_path, 'a', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow([
-                        str(original_output.relative_to(project_root)),
-                        label,
-                        video_rel,
-                        -1,  # -1 indicates original
-                        True
-                    ])
+                metadata_rows.append({
+                    "video_path": str(original_output.relative_to(project_root)),
+                    "label": label,
+                    "original_video": video_rel,
+                    "augmentation_idx": -1,  # -1 indicates original
+                    "is_original": True
+                })
                 total_videos_processed += 1
             
             # Generate augmentations with chunked processing
@@ -841,15 +855,13 @@ def stage1_augment_videos(
                             break
                 
                 if not metadata_entry_exists:
-                    with open(metadata_path, 'a', newline='') as f:
-                        writer = csv.writer(f)
-                        writer.writerow([
-                            aug_path_rel,
-                            label,
-                            video_rel,
-                            aug_idx,
-                            False
-                        ])
+                    metadata_rows.append({
+                        "video_path": aug_path_rel,
+                        "label": label,
+                        "original_video": video_rel,
+                        "augmentation_idx": aug_idx,
+                        "is_original": False
+                    })
                 total_videos_processed += 1
                 logger.info(f"✓ Augmentation {aug_idx + 1}/{num_augmentations} available at {aug_path}")
             
@@ -861,16 +873,25 @@ def stage1_augment_videos(
     # This ensures that if all augmentations already exist and were skipped,
     # or if the metadata file is missing/corrupted, we rebuild it from the files
     needs_reconstruction = False
-    if not metadata_path.exists():
+    # Check if any metadata file exists
+    metadata_exists = (metadata_path_arrow.exists() or 
+                      metadata_path_parquet.exists() or 
+                      metadata_path_csv.exists())
+    if not metadata_exists:
         needs_reconstruction = True
         logger.info("Stage 1: Metadata file missing, reconstructing from existing augmentation files...")
-    elif metadata_path.exists() and metadata_path.stat().st_size == 0:
+    elif metadata_path and metadata_path.exists() and metadata_path.stat().st_size == 0:
         needs_reconstruction = True
         logger.info("Stage 1: Metadata file is empty, reconstructing from existing augmentation files...")
     else:
         # Check if metadata is incomplete (has fewer entries than expected files)
         try:
-            existing_metadata_df = pl.read_csv(str(metadata_path))
+            if metadata_path.suffix == '.arrow':
+                existing_metadata_df = pl.read_ipc(metadata_path)
+            elif metadata_path.suffix == '.parquet':
+                existing_metadata_df = pl.read_parquet(metadata_path)
+            else:
+                existing_metadata_df = pl.read_csv(str(metadata_path))
             # Count expected files: original + augmentations for each video in range
             expected_entries = df.height * (1 + num_augmentations)  # 1 original + num_augmentations per video
             if existing_metadata_df.height < expected_entries * 0.5:  # If less than 50% of expected
@@ -883,17 +904,33 @@ def stage1_augment_videos(
     if needs_reconstruction:
         _reconstruct_metadata_from_files(metadata_path, output_dir, project_root, df, num_augmentations)
     
-    # Load final metadata from CSV
-    if metadata_path.exists():
+    # Load final metadata (support Arrow/Parquet/CSV)
+    metadata_paths = [
+        output_dir / "augmented_metadata.arrow",
+        output_dir / "augmented_metadata.parquet",
+        output_dir / "augmented_metadata.csv"
+    ]
+    metadata_path_found = None
+    for mp in metadata_paths:
+        if mp.exists():
+            metadata_path_found = mp
+            break
+    
+    if metadata_path_found:
         try:
-            metadata_df = pl.read_csv(str(metadata_path))
-            logger.info(f"\n✓ Stage 1 complete: Metadata available at {metadata_path}")
+            if metadata_path_found.suffix == '.arrow':
+                metadata_df = pl.read_ipc(metadata_path_found)
+            elif metadata_path_found.suffix == '.parquet':
+                metadata_df = pl.read_parquet(metadata_path_found)
+            else:
+                metadata_df = pl.read_csv(str(metadata_path_found))
+            logger.info(f"\n✓ Stage 1 complete: Metadata available at {metadata_path_found}")
             logger.info(f"✓ Stage 1: Total entries in metadata: {metadata_df.height}")
             if total_videos_processed > 0:
                 logger.info(f"✓ Stage 1: Processed {total_videos_processed} videos in this run")
             return metadata_df
         except Exception as e:
-            logger.error(f"Failed to read metadata CSV: {e}")
+            logger.error(f"Failed to read metadata: {e}")
             return pl.DataFrame()
     else:
         logger.error("Stage 1: No metadata file found and could not reconstruct!")

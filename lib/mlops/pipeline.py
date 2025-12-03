@@ -332,7 +332,7 @@ def build_mlops_pipeline(config: RunConfig, tracker: ExperimentTracker,
         # For 4 CPUs and 80GB RAM, always use num_workers=0
         # to avoid multiprocessing overhead and OOM from worker processes
         # With only 4 CPUs, multiprocessing workers consume too much memory
-        effective_num_workers = 0
+            effective_num_workers = 0
         logger.info("Using num_workers=0 (optimized for 4 CPUs, 80GB RAM to avoid OOM)")
         
         # Try balanced sampling

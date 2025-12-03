@@ -183,7 +183,7 @@ if "$PYTHON_CMD" "$ORIG_DIR/src/scripts/run_stage2_features.py" \
     STAGE2_DURATION=$((STAGE2_END - STAGE2_START))
     log "✓ Stage 2 completed successfully in ${STAGE2_DURATION}s ($(($STAGE2_DURATION / 60)) minutes)"
     log "Results saved to: $ORIG_DIR/$OUTPUT_DIR"
-    log "Next step: Run Stage 3 with: sbatch src/scripts/slurm_stage3_downscaling.sh"
+    log "Next step: Run Stage 3 with: sbatch src/scripts/slurm_stage3_scaling.sh"
 else
     STAGE2_END=$(date +%s)
     STAGE2_DURATION=$((STAGE2_END - STAGE2_START))

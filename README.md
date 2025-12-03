@@ -67,8 +67,8 @@ python3 src/run_new_pipeline.py
 # Run stages individually
 python3 src/scripts/run_stage1_augmentation.py
 python3 src/scripts/run_stage2_features.py
-python3 src/scripts/run_stage3_downscaling.py
-python3 src/scripts/run_stage4_downscaled_features.py
+python3 src/scripts/run_stage3_scaling.py
+python3 src/scripts/run_stage4_scaled_features.py
 python3 src/scripts/run_stage5_training.py
 ```
 
@@ -79,11 +79,49 @@ See [src/scripts/README.md](src/scripts/README.md) for detailed usage.
 sbatch src/scripts/run_fvc_training.sh
 ```
 
+### 4. View Results Dashboard
+
+After training completes, launch the interactive results dashboard:
+
+```bash
+streamlit run src/dashboard_results.py
+```
+
+The enhanced dashboard provides:
+- **Model performance comparisons** with confidence intervals
+- **K-fold cross-validation analysis** with violin plots
+- **ROC curves and Precision-Recall curves**
+- **Training curves** (loss/accuracy over epochs)
+- **Statistical significance testing** (pairwise t-tests)
+- **Comprehensive dataset statistics**
+- **Publication-ready visualizations**
+
+See [Dashboard Usage Guide](docs/DASHBOARD_USAGE.md) for details.
+
+### 5. Generate Paper Figures
+
+Generate publication-ready figures for IEEE paper submission:
+
+```bash
+python src/generate_paper_figures.py
+```
+
+This creates high-quality figures in PNG, PDF, and SVG formats with:
+- 300 DPI resolution
+- Academic font styling (Times New Roman)
+- Proper labels and legends
+- Statistical significance analysis
+- LaTeX-ready tables
+
+See [Paper Figure Generation Guide](docs/PAPER_FIGURE_GENERATION.md) for details.
+
 ## Documentation
 
 - [Project Overview](docs/PROJECT_OVERVIEW.md) - Comprehensive project documentation
 - [MLOps Optimizations](docs/MLOPS_OPTIMIZATIONS.md) - MLOps system design details
 - [OOM and K-Fold Optimizations](docs/OOM_AND_KFOLD_OPTIMIZATIONS.md) - Memory management and CV
+- [Dashboard Usage Guide](docs/DASHBOARD_USAGE.md) - Interactive results dashboard guide
+- [Paper Figure Generation](docs/PAPER_FIGURE_GENERATION.md) - Generate publication-ready figures
 - [Changelog](docs/CHANGELOG.md) - Version history
 
 ## Dependencies

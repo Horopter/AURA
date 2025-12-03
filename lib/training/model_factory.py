@@ -74,6 +74,24 @@ MODEL_MEMORY_CONFIGS = {
         "num_frames": 6,  # Reduced from 8 to save memory
         "gradient_accumulation_steps": 8,  # Maintain effective batch size of 8
     },
+    "variable_ar_cnn": {
+        "batch_size": 2,  # Can use slightly larger batch for smaller model
+        "num_workers": 0,
+        "num_frames": 8,
+        "gradient_accumulation_steps": 4,
+    },
+    "i3d": {
+        "batch_size": 1,  # Minimum for memory efficiency
+        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
+        "num_frames": 6,  # Reduced from 8 to save memory
+        "gradient_accumulation_steps": 20,  # Maintain effective batch size of 20
+    },
+    "r2plus1d": {
+        "batch_size": 1,  # Minimum for memory efficiency
+        "num_workers": 0,  # Always 0 to avoid multiprocessing memory overhead
+        "num_frames": 6,  # Reduced from 8 to save memory
+        "gradient_accumulation_steps": 20,  # Maintain effective batch size of 20
+    },
 }
 
 
@@ -196,6 +214,25 @@ def create_model(model_type: str, config: RunConfig) -> Any:
         from lib.models import PretrainedInceptionVideoModel
         return PretrainedInceptionVideoModel(
             freeze_backbone=get_param("freeze_backbone", False)
+        )
+    
+    elif model_type == "variable_ar_cnn":
+        from lib.models import VariableARVideoModel
+        return VariableARVideoModel(
+            in_channels=get_param("in_channels", 3),
+            base_channels=get_param("base_channels", 32)
+        )
+    
+    elif model_type == "i3d":
+        from .i3d import I3DModel
+        return I3DModel(
+            pretrained=get_param("pretrained", True)
+        )
+    
+    elif model_type == "r2plus1d":
+        from .r2plus1d import R2Plus1DModel
+        return R2Plus1DModel(
+            pretrained=get_param("pretrained", True)
         )
     
     else:

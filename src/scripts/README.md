@@ -11,15 +11,15 @@ This directory contains individual scripts to run each stage of the FVC pipeline
 ### Python Scripts (Local/Interactive)
 - `run_stage1_augmentation.py` - Stage 1: Video Augmentation
 - `run_stage2_features.py` - Stage 2: Handcrafted Feature Extraction
-- `run_stage3_downscaling.py` - Stage 3: Video Downscaling
-- `run_stage4_downscaled_features.py` - Stage 4: Downscaled Feature Extraction
+- `run_stage3_scaling.py` - Stage 3: Video Scaling
+- `run_stage4_scaled_features.py` - Stage 4: Scaled Video Feature Extraction
 - `run_stage5_training.py` - Stage 5: Model Training
 
 ### SLURM Batch Scripts (Cluster)
 - `slurm_stage1_augmentation.sh` - Stage 1: Video Augmentation (SLURM)
 - `slurm_stage2_features.sh` - Stage 2: Feature Extraction (SLURM)
-- `slurm_stage3_downscaling.sh` - Stage 3: Video Downscaling (SLURM)
-- `slurm_stage4_downscaled_features.sh` - Stage 4: Downscaled Features (SLURM)
+- `slurm_stage3_scaling.sh` - Stage 3: Video Scaling (SLURM)
+- `slurm_stage4_scaled_features.sh` - Stage 4: Scaled Features (SLURM)
 - `slurm_stage5_training.sh` - Stage 5: Model Training (SLURM)
 
 ## Available Scripts
@@ -76,62 +76,62 @@ python src/scripts/run_stage2_features.py --augmented-metadata data/custom/augme
 
 ---
 
-### Stage 3: Video Downscaling
-**Script:** `run_stage3_downscaling.py`
+### Stage 3: Video Scaling
+**Script:** `run_stage3_scaling.py`
 
-Downscales videos to a target resolution using letterboxing.
+Scales videos to a target max dimension using letterboxing or autoencoder.
 
 **Usage:**
 ```bash
 # Default: 224x224 with resolution method
-python src/scripts/run_stage3_downscaling.py
+python src/scripts/run_stage3_scaling.py
 
 # Custom target size
-python src/scripts/run_stage3_downscaling.py --target-size 112
+python src/scripts/run_stage3_scaling.py --target-size 112
 
 # Custom method
-python src/scripts/run_stage3_downscaling.py --method resolution
+python src/scripts/run_stage3_scaling.py --method resolution
 ```
 
 **Output:**
-- `data/downscaled_videos/downscaled_metadata.csv` - Downscaled videos metadata
-- `data/downscaled_videos/*.mp4` - Downscaled video files
+- `data/scaled_videos/scaled_metadata.arrow` - Scaled videos metadata
+- `data/scaled_videos/*.mp4` - Scaled video files
 
 **Prerequisites:**
 - Stage 1 must be completed (or provide `--augmented-metadata` path)
 
 ---
 
-### Stage 4: Downscaled Feature Extraction
-**Script:** `run_stage4_downscaled_features.py`
+### Stage 4: Scaled Video Feature Extraction
+**Script:** `run_stage4_scaled_features.py`
 
-Extracts additional features from downscaled videos (P features).
+Extracts additional features from scaled videos (P features).
 
 **Usage:**
 ```bash
 # Default: uses Stage 3 output
-python src/scripts/run_stage4_downscaled_features.py
+python src/scripts/run_stage4_scaled_features.py
 
 # Custom number of frames
-python src/scripts/run_stage4_downscaled_features.py --num-frames 6
+python src/scripts/run_stage4_scaled_features.py --num-frames 6
 
 # Custom metadata path
-python src/scripts/run_stage4_downscaled_features.py --downscaled-metadata data/custom/downscaled_metadata.csv
+python src/scripts/run_stage4_scaled_features.py --scaled-metadata data/custom/scaled_metadata.arrow
 ```
 
 **Output:**
-- `data/features_stage4/features_downscaled_metadata.csv` - Downscaled features metadata
+- `data/features_stage4/features_scaled_metadata.arrow` - Scaled features metadata
 - `data/features_stage4/*.npy` - Downscaled feature files (one per video)
 
 **Prerequisites:**
-- Stage 3 must be completed (or provide `--downscaled-metadata` path)
+- Stage 3 must be completed (or provide `--scaled-metadata` path)
 
 ---
 
 ### Stage 5: Model Training
 **Script:** `run_stage5_training.py`
 
-Trains models using downscaled videos and extracted features.
+Trains models using scaled videos and extracted features.
 
 **Usage:**
 ```bash
@@ -177,10 +177,10 @@ python src/scripts/run_stage1_augmentation.py
 python src/scripts/run_stage2_features.py
 
 # Run Stage 3
-python src/scripts/run_stage3_downscaling.py
+python src/scripts/run_stage3_scaling.py
 
 # Run Stage 4
-python src/scripts/run_stage4_downscaled_features.py
+python src/scripts/run_stage4_scaled_features.py
 
 # Run Stage 5
 python src/scripts/run_stage5_training.py
@@ -196,10 +196,10 @@ sbatch src/scripts/slurm_stage1_augmentation.sh
 sbatch src/scripts/slurm_stage2_features.sh
 
 # After Stage 2 completes, submit Stage 3
-sbatch src/scripts/slurm_stage3_downscaling.sh
+sbatch src/scripts/slurm_stage3_scaling.sh
 
 # After Stage 3 completes, submit Stage 4
-sbatch src/scripts/slurm_stage4_downscaled_features.sh
+sbatch src/scripts/slurm_stage4_scaled_features.sh
 
 # After Stage 4 completes, submit Stage 5
 sbatch src/scripts/slurm_stage5_training.sh
@@ -233,19 +233,19 @@ export FVC_STAGE2_OUTPUT_DIR="data/features_stage2"  # Output directory
 sbatch src/scripts/slurm_stage2_features.sh
 ```
 
-### Stage 3 (Downscaling)
+### Stage 3 (Scaling)
 ```bash
 export FVC_TARGET_SIZE=224  # Target size (224x224)
 export FVC_DOWNSCALE_METHOD="resolution"  # Method: resolution or autoencoder
-export FVC_STAGE3_OUTPUT_DIR="data/downscaled_videos"  # Output directory
-sbatch src/scripts/slurm_stage3_downscaling.sh
+export FVC_STAGE3_OUTPUT_DIR="data/scaled_videos"  # Output directory
+sbatch src/scripts/slurm_stage3_scaling.sh
 ```
 
-### Stage 4 (Downscaled Features)
+### Stage 4 (Scaled Features)
 ```bash
 export FVC_NUM_FRAMES=8  # Number of frames
 export FVC_STAGE4_OUTPUT_DIR="data/features_stage4"  # Output directory
-sbatch src/scripts/slurm_stage4_downscaled_features.sh
+sbatch src/scripts/slurm_stage4_scaled_features.sh
 ```
 
 ### Stage 5 (Training)
@@ -302,7 +302,7 @@ All scripts support:
 ### Stage 2/3/4/5 fails: "Metadata file not found"
 - Ensure previous stages have completed successfully
 - Check that metadata files exist in expected locations
-- Use `--augmented-metadata`, `--downscaled-metadata`, etc. to specify custom paths
+- Use `--augmented-metadata`, `--scaled-metadata`, etc. to specify custom paths
 
 ### Out of Memory (OOM) errors
 - Reduce `--num-augmentations` in Stage 1

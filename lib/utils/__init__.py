@@ -24,6 +24,15 @@ from .paths import (
     resolve_video_path,
     get_video_path_candidates,
     check_video_path_exists,
+    find_metadata_file,
+    load_metadata_flexible,
+)
+
+# Video metadata cache
+from .video_cache import (
+    get_video_metadata,
+    get_video_metadata_hash,
+    clear_cache,
 )
 
 # Metrics utilities
@@ -47,6 +56,12 @@ __all__ = [
     "resolve_video_path",
     "get_video_path_candidates",
     "check_video_path_exists",
+    "find_metadata_file",
+    "load_metadata_flexible",
+    # Video cache
+    "get_video_metadata",
+    "get_video_metadata_hash",
+    "clear_cache",
     # Metrics
     "collect_logits_and_labels",
     "basic_classification_metrics",

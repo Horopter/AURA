@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+import polars as pl
 
 
 def resolve_video_path(video_rel: str, project_root: str) -> str:
@@ -100,8 +101,64 @@ def check_video_path_exists(video_rel: str, project_root: str) -> bool:
     return any(os.path.exists(c) for c in candidates)
 
 
+def find_metadata_file(base_path: Path, filename_base: str) -> Optional[Path]:
+    """
+    Find metadata file with any supported extension (.arrow, .parquet, .csv).
+    
+    Tries in order: .arrow, .parquet, .csv (preferring Arrow format).
+    
+    Args:
+        base_path: Base directory path
+        filename_base: Filename without extension (e.g., "augmented_metadata")
+    
+    Returns:
+        Path to existing metadata file, or None if not found
+    """
+    base_path = Path(base_path)
+    for ext in ['.arrow', '.parquet', '.csv']:
+        candidate = base_path / f"{filename_base}{ext}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def load_metadata_flexible(path: str) -> Optional[pl.DataFrame]:
+    """
+    Load metadata from CSV, Arrow, or Parquet format.
+    
+    Tries formats in order: .arrow, .parquet, .csv (preferring Arrow format).
+    
+    Args:
+        path: Path to metadata file (with or without extension)
+    
+    Returns:
+        Polars DataFrame, or None if file doesn't exist
+    """
+    path_obj = Path(path)
+    
+    # If path doesn't exist, try with different extensions
+    if not path_obj.exists():
+        for ext in ['.arrow', '.parquet', '.csv']:
+            candidate = path_obj.with_suffix(ext)
+            if candidate.exists():
+                path_obj = candidate
+                break
+        else:
+            return None
+    
+    # Load based on extension
+    if path_obj.suffix == '.arrow':
+        return pl.read_ipc(path_obj)
+    elif path_obj.suffix == '.parquet':
+        return pl.read_parquet(path_obj)
+    else:
+        return pl.read_csv(path_obj)
+
+
 __all__ = [
     "resolve_video_path",
     "get_video_path_candidates",
     "check_video_path_exists",
+    "find_metadata_file",
+    "load_metadata_flexible",
 ]

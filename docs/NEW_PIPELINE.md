@@ -33,35 +33,37 @@ This document describes the new 5-stage pipeline architecture for the FVC Binary
 - Creates metadata CSV: `data/features_stage2/features_metadata.csv`
 - M = number of features extracted (typically ~50)
 
-### Stage 3: Downscale Videos
+### Stage 3: Scale Videos
 **Input**: 11N videos (from Stage 1)  
-**Output**: 11N downscaled videos  
-**Location**: `lib/pipeline_stage3_downscale.py`
+**Output**: 11N scaled videos  
+**Location**: `lib/scaling/pipeline.py`
 
-- Downscales all videos to manageable sizes
+- Scales all videos to target max dimension (can both downscale and upscale)
 - Methods:
-  - **Resolution reduction**: Simple resize with letterboxing (default)
-  - **Autoencoder**: Pretrained autoencoder for dimensionality reduction (optional)
-- Target size: 224x224 (configurable)
-- Preserves all videos (original + augmented)
-- Creates metadata CSV: `data/downscaled_videos/downscaled_metadata.csv`
+  - **Letterbox resize**: Simple resize with letterboxing (default)
+  - **Autoencoder**: Pretrained Hugging Face VAE for high-quality scaling (optional)
+- Target max dimension: 256 pixels (max(width, height) = 256, configurable)
+- Preserves aspect ratio for all videos
+- Stores original dimensions in metadata for scaling direction detection
+- Creates metadata: `data/scaled_videos/scaled_metadata.arrow` (or `.parquet`/`.csv`)
 
-### Stage 4: Extract Additional Features from Downscaled Videos (P features)
-**Input**: 11N downscaled videos (from Stage 3)  
+### Stage 4: Extract Additional Features from Scaled Videos (P features)
+**Input**: 11N scaled videos (from Stage 3)  
 **Output**: P additional features per video  
-**Location**: `lib/pipeline_stage4_features_downscaled.py`
+**Location**: `lib/features/scaled.py`
 
-- Extracts new features specific to downscaled videos:
+- Extracts new features specific to scaled videos:
   - Block artifact strength
   - Edge preservation metrics
   - Texture uniformity
-  - Frequency domain features (DCT on downscaled frames)
+  - Frequency domain features (DCT on scaled frames)
   - Compression artifact visibility
   - Color consistency
-- These features are different from Stage 2 features (detectable on downscaled videos)
-- Saves features as `.npy` files
-- Creates metadata CSV: `data/features_stage4/features_downscaled_metadata.csv`
-- P = number of additional features (typically ~20)
+  - **Binary features**: `is_upscaled` and `is_downscaled` (indicates scaling direction)
+- These features are different from Stage 2 features (detectable on scaled videos)
+- Saves features as `.parquet` files (Arrow format)
+- Creates metadata: `data/features_stage4/features_scaled_metadata.arrow` (or `.parquet`/`.csv`)
+- P = number of additional features (typically ~22, including is_upscaled and is_downscaled)
 
 ### Stage 5: Training
 **Input**: 
@@ -93,9 +95,9 @@ Stage 1: Augmentation
     ↓
     ├─→ Stage 2: Extract M features → M features per video
     │
-    └─→ Stage 3: Downscale → 11N downscaled videos
+    └─→ Stage 3: Scale → 11N scaled videos (max dimension = target_size)
             ↓
-        Stage 4: Extract P features → P features per video
+        Stage 4: Extract P features → P features per video (includes is_upscaled, is_downscaled)
             ↓
         Stage 5: Training (videos + M features + P features)
 ```
@@ -153,7 +155,7 @@ data/
 │   ├── video1_aug0_features.npy
 │   ├── ...
 │   └── features_metadata.csv
-├── downscaled_videos/
+├── scaled_videos/
 │   ├── video1_original_downscaled.mp4
 │   ├── video1_aug0_downscaled.mp4
 │   ├── ...

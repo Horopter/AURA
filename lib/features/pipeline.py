@@ -45,15 +45,20 @@ def extract_features_from_video(
     if extractor is None:
         extractor = HandcraftedFeatureExtractor()
     
+    # Use cached metadata to avoid duplicate frame counting
+    from lib.utils.video_cache import get_video_metadata
+    
+    metadata = get_video_metadata(video_path, use_cache=True)
+    total_frames = metadata['total_frames']
+    
+    if total_frames == 0:
+        logger.warning(f"Video has no frames: {video_path}")
+        return {}
+    
     container = None
     try:
         container = av.open(video_path)
         stream = container.streams.video[0]
-        total_frames = stream.frames if stream.frames > 0 else 0
-        
-        if total_frames == 0:
-            logger.warning(f"Video has no frames: {video_path}")
-            return {}
         
         # Sample frames uniformly
         frame_indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
@@ -67,6 +72,10 @@ def extract_features_from_video(
                     frame_array = frame.to_ndarray(format='rgb24')
                     features = extractor.extract(frame_array, video_path)
                     all_features.append(features)
+                    
+                    # Aggressive GC after each frame extraction
+                    del frame_array
+                    aggressive_gc(clear_cuda=False)
                 
                 frame_count += 1
                 if frame_count >= total_frames or len(all_features) >= num_frames:
@@ -120,13 +129,18 @@ def stage2_extract_features(
     output_dir = project_root / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Load augmented metadata
+    # Load augmented metadata (support both CSV and Arrow/Parquet)
     logger.info("Stage 2: Loading augmented metadata...")
     if not Path(augmented_metadata_path).exists():
         logger.error(f"Augmented metadata not found: {augmented_metadata_path}")
         return pl.DataFrame()
     
-    df = pl.read_csv(augmented_metadata_path)
+    # Try Arrow/Parquet first, fallback to CSV
+    metadata_path_obj = Path(augmented_metadata_path)
+    if metadata_path_obj.suffix in ['.arrow', '.parquet']:
+        df = pl.read_ipc(metadata_path_obj) if metadata_path_obj.suffix == '.arrow' else pl.read_parquet(metadata_path_obj)
+    else:
+        df = pl.read_csv(augmented_metadata_path)
     logger.info(f"Stage 2: Processing {df.height} videos")
     
     extractor = HandcraftedFeatureExtractor()
@@ -154,10 +168,24 @@ def stage2_extract_features(
                 logger.warning(f"No features extracted from {video_path}")
                 continue
             
-            # Save features as .npy
+            # Save features as Arrow/Parquet (better than .npy)
             video_id = Path(video_path).stem
-            feature_path = output_dir / f"{video_id}_features.npy"
-            np.save(str(feature_path), features)
+            feature_path = output_dir / f"{video_id}_features.parquet"
+            
+            # Convert features dict to Arrow table and save as Parquet
+            try:
+                import pyarrow as pa
+                import pyarrow.parquet as pq
+                
+                # Convert dict to columnar format (each key becomes a column with single value)
+                feature_dict = {k: [v] for k, v in features.items()}
+                table = pa.Table.from_pydict(feature_dict)
+                pq.write_table(table, str(feature_path), compression='snappy')
+            except ImportError:
+                # Fallback to numpy if pyarrow not available
+                logger.warning("PyArrow not available, falling back to .npy format")
+                feature_path = output_dir / f"{video_id}_features.npy"
+                np.save(str(feature_path), features)
             
             # Create metadata row
             feature_row = {
@@ -181,9 +209,16 @@ def stage2_extract_features(
     # Create DataFrame
     features_df = pl.DataFrame(feature_rows)
     
-    # Save metadata
-    metadata_path = output_dir / "features_metadata.csv"
-    features_df.write_csv(str(metadata_path))
+    # Save metadata as Arrow IPC (faster and type-safe)
+    metadata_path = output_dir / "features_metadata.arrow"
+    try:
+        features_df.write_ipc(str(metadata_path))
+        logger.debug(f"Saved metadata as Arrow IPC: {metadata_path}")
+    except Exception as e:
+        # Fallback to Parquet if IPC fails
+        logger.warning(f"Arrow IPC write failed, using Parquet: {e}")
+        metadata_path = output_dir / "features_metadata.parquet"
+        features_df.write_parquet(str(metadata_path))
     logger.info(f"✓ Stage 2 complete: Saved features to {output_dir}")
     logger.info(f"✓ Stage 2: Extracted features from {len(feature_rows)} videos")
     

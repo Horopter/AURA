@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple, Iterable
+from typing import Optional, Tuple, Iterable, Dict, List
 import torch
 import torch.nn as nn
-from torch.optim import Optimizer, Adam
-from torch.optim.lr_scheduler import _LRScheduler, StepLR
+from torch.optim import Optimizer, AdamW
+from torch.optim.lr_scheduler import _LRScheduler, StepLR, CosineAnnealingLR, LambdaLR
 from torch.utils.data import DataLoader, WeightedRandomSampler
-from lib.models import VariableARVideoModel
+# VariableARVideoModel import removed - not needed (freeze_backbone_unfreeze_head uses generic nn.Module)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,11 @@ class OptimConfig:
     lr: float = 1e-4
     weight_decay: float = 1e-4
     betas: Tuple[float, float] = (0.9, 0.999)
+    # Differential learning rates for pretrained models
+    backbone_lr: Optional[float] = None  # If None, uses lr
+    head_lr: Optional[float] = None  # If None, uses lr * 10 (common practice)
+    # Gradient clipping
+    max_grad_norm: float = 1.0  # Clip gradients to this norm (0 = disabled)
 
 
 @dataclass
@@ -44,6 +49,12 @@ class TrainConfig:
     checkpoint_dir: Optional[str] = None
     early_stopping_patience: int = 5
     gradient_accumulation_steps: int = 1
+    # Learning rate scheduling
+    scheduler_type: str = "cosine"  # "cosine", "step", or "none"
+    warmup_epochs: int = 2  # Number of warmup epochs
+    warmup_factor: float = 0.1  # Initial LR = base_lr * warmup_factor
+    # Gradient monitoring
+    log_grad_norm: bool = True  # Log gradient norms for debugging
 
 
 class EarlyStopping:
@@ -84,14 +95,16 @@ def unfreeze_all(model: nn.Module) -> None:
         param.requires_grad = True
 
 
-def freeze_backbone_unfreeze_head(model: VariableARVideoModel) -> None:
-    """Freeze backbone but unfreeze head."""
+def freeze_backbone_unfreeze_head(model: nn.Module) -> None:
+    """Freeze backbone but unfreeze head (for pretrained models)."""
     if hasattr(model, 'backbone'):
         freeze_all(model.backbone)
     if hasattr(model, 'head'):
         unfreeze_all(model.head)
     elif hasattr(model, 'classifier'):
         unfreeze_all(model.classifier)
+    elif hasattr(model, 'fc'):  # Some models use 'fc' for final layer
+        unfreeze_all(model.fc)
 
 
 def trainable_params(model: nn.Module) -> Iterable[torch.nn.Parameter]:
@@ -125,9 +138,75 @@ def make_weighted_sampler(labels: torch.Tensor) -> WeightedRandomSampler:
     return WeightedRandomSampler(sample_weights, len(sample_weights))
 
 
-def build_optimizer(model: nn.Module, config: OptimConfig) -> Optimizer:
-    """Build optimizer from config."""
-    return Adam(
+def build_optimizer(
+    model: nn.Module, 
+    config: OptimConfig,
+    use_differential_lr: bool = False
+) -> Optimizer:
+    """
+    Build optimizer from config.
+    
+    Args:
+        model: Model to optimize
+        config: Optimizer configuration
+        use_differential_lr: If True, use different LRs for backbone and head (for pretrained models)
+    
+    Returns:
+        Optimizer instance
+    """
+    if use_differential_lr and (config.backbone_lr is not None or config.head_lr is not None):
+        # Separate parameter groups for backbone and head
+        backbone_params = []
+        head_params = []
+        
+        # Try to identify backbone and head
+        if hasattr(model, 'backbone') and hasattr(model, 'fc'):
+            # Standard pretrained model structure
+            backbone_params = list(model.backbone.parameters())
+            head_params = list(model.fc.parameters())
+        elif hasattr(model, 'backbone') and hasattr(model, 'head'):
+            backbone_params = list(model.backbone.parameters())
+            head_params = list(model.head.parameters())
+        elif hasattr(model, 'backbone') and hasattr(model, 'classifier'):
+            backbone_params = list(model.backbone.parameters())
+            head_params = list(model.classifier.parameters())
+        else:
+            # For ViT-based models, try to separate backbone from temporal head
+            if hasattr(model, 'vit_backbone'):
+                backbone_params = list(model.vit_backbone.parameters())
+                # Get all other parameters as head
+                head_params = [
+                    p for name, p in model.named_parameters()
+                    if 'vit_backbone' not in name
+                ]
+            else:
+                # Fallback: use all parameters with same LR
+                use_differential_lr = False
+        
+        if use_differential_lr and backbone_params and head_params:
+            backbone_lr = config.backbone_lr if config.backbone_lr is not None else config.lr
+            head_lr = config.head_lr if config.head_lr is not None else config.lr * 10.0
+            
+            param_groups = [
+                {'params': backbone_params, 'lr': backbone_lr, 'name': 'backbone'},
+                {'params': head_params, 'lr': head_lr, 'name': 'head'}
+            ]
+            
+            logger.info(
+                f"Using differential learning rates: backbone={backbone_lr:.2e}, head={head_lr:.2e}"
+            )
+            
+            # Use AdamW for better weight decay handling
+            return AdamW(
+                param_groups,
+                lr=config.lr,  # Base LR (overridden by param groups)
+                weight_decay=config.weight_decay,
+                betas=config.betas
+            )
+    
+    # Standard optimizer for all parameters
+    # Use AdamW instead of Adam for better weight decay (decoupled from gradient)
+    return AdamW(
         model.parameters(),
         lr=config.lr,
         weight_decay=config.weight_decay,
@@ -136,12 +215,51 @@ def build_optimizer(model: nn.Module, config: OptimConfig) -> Optimizer:
 
 
 def build_scheduler(
-    optimizer: Optimizer, 
-    step_size: int = 10, 
+    optimizer: Optimizer,
+    scheduler_type: str = "cosine",
+    num_epochs: int = 20,
+    warmup_epochs: int = 2,
+    warmup_factor: float = 0.1,
+    step_size: int = 10,
     gamma: float = 0.1
 ) -> _LRScheduler:
-    """Build learning rate scheduler."""
-    return StepLR(optimizer, step_size=step_size, gamma=gamma)
+    """
+    Build learning rate scheduler with optional warmup.
+    
+    Args:
+        optimizer: Optimizer instance
+        scheduler_type: "cosine", "step", or "none"
+        num_epochs: Total number of epochs
+        warmup_epochs: Number of warmup epochs
+        warmup_factor: Initial LR multiplier during warmup
+        step_size: Step size for StepLR
+        gamma: LR decay factor for StepLR
+    
+    Returns:
+        Learning rate scheduler
+    """
+    if scheduler_type == "none":
+        # No scheduling
+        return LambdaLR(optimizer, lr_lambda=lambda epoch: 1.0)
+    
+    # Create base scheduler
+    if scheduler_type == "cosine":
+        base_scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs - warmup_epochs, eta_min=1e-6)
+    elif scheduler_type == "step":
+        base_scheduler = StepLR(optimizer, step_size=step_size, gamma=gamma)
+    else:
+        logger.warning(f"Unknown scheduler type: {scheduler_type}. Using StepLR.")
+        base_scheduler = StepLR(optimizer, step_size=step_size, gamma=gamma)
+    
+    # Add warmup if requested
+    if warmup_epochs > 0:
+        # Use a simpler approach: combine warmup with base scheduler
+        # We'll manually handle warmup in the training loop, then use base scheduler
+        # For now, return base scheduler and handle warmup in fit()
+        logger.info(f"Warmup will be handled in training loop ({warmup_epochs} epochs)")
+        return base_scheduler
+    else:
+        return base_scheduler
 
 
 def train_one_epoch(
@@ -154,6 +272,8 @@ def train_one_epoch(
     epoch: int = 0,
     log_interval: int = 10,
     gradient_accumulation_steps: int = 1,
+    max_grad_norm: float = 1.0,
+    log_grad_norm: bool = False,
 ) -> float:
     """
     Train model for one epoch.
@@ -241,6 +361,28 @@ def train_one_epoch(
         
         # Update weights at end of accumulation cycle
         if (batch_idx + 1) % gradient_accumulation_steps == 0:
+            # Gradient clipping (before optimizer step)
+            if max_grad_norm > 0:
+                if scaler is not None:
+                    # Unscale gradients before clipping (required for AMP)
+                    scaler.unscale_(optimizer)
+                    # Clip gradients
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), 
+                        max_norm=max_grad_norm
+                    )
+                else:
+                    # Clip gradients directly
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), 
+                        max_norm=max_grad_norm
+                    )
+                
+                # Log gradient norm if requested
+                if log_grad_norm and (batch_idx + 1) % log_interval == 0:
+                    logger.info(f"Gradient norm: {grad_norm:.4f} (clipped to {max_grad_norm})")
+            
+            # Optimizer step
             if scaler is not None:
                 scaler.step(optimizer)
                 scaler.update()
@@ -285,8 +427,13 @@ def evaluate(
     first_batch = True
     
     for clips, labels in loader:
-        clips = clips.to(device)
-        labels = labels.to(device)
+        # GPU-optimized data transfer
+        if device.startswith("cuda"):
+            clips = clips.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
+        else:
+            clips = clips.to(device)
+            labels = labels.to(device)
         
         # Use autocast for mixed precision
         if device.startswith("cuda"):
@@ -345,23 +492,62 @@ def fit(
     val_loader: Optional[DataLoader],
     optim_cfg: OptimConfig,
     train_cfg: TrainConfig,
+    use_differential_lr: bool = False,
 ) -> nn.Module:
     """
     High-level training loop with optional validation.
+    
+    Args:
+        model: Model to train
+        train_loader: Training data loader
+        val_loader: Validation data loader (optional)
+        optim_cfg: Optimizer configuration
+        train_cfg: Training configuration
+        use_differential_lr: Use different LRs for backbone and head (for pretrained models)
     
     Returns:
         Trained model
     """
     device = train_cfg.device
     model.to(device)
-    model.train()
+    model.train()  # Ensure model is in training mode
     
-    optimizer = build_optimizer(model, optim_cfg)
-    scheduler = build_scheduler(optimizer)
+    # Build optimizer with optional differential learning rates
+    optimizer = build_optimizer(model, optim_cfg, use_differential_lr=use_differential_lr)
+    
+    # Build scheduler with warmup
+    scheduler = build_scheduler(
+        optimizer,
+        scheduler_type=train_cfg.scheduler_type,
+        num_epochs=train_cfg.num_epochs,
+        warmup_epochs=train_cfg.warmup_epochs,
+        warmup_factor=train_cfg.warmup_factor
+    )
+    
+    # Early stopping
+    early_stopping = None
+    if train_cfg.early_stopping_patience > 0 and val_loader is not None:
+        early_stopping = EarlyStopping(patience=train_cfg.early_stopping_patience, mode="max")
     
     best_val_acc = 0.0
+    best_model_state = None
+    initial_lr = optimizer.param_groups[0]['lr']
     
     for epoch in range(1, train_cfg.num_epochs + 1):
+        # Handle warmup manually
+        if train_cfg.warmup_epochs > 0 and epoch <= train_cfg.warmup_epochs:
+            # Linear warmup: warmup_factor -> 1.0
+            warmup_progress = epoch / train_cfg.warmup_epochs
+            lr_scale = train_cfg.warmup_factor + (1.0 - train_cfg.warmup_factor) * warmup_progress
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = initial_lr * lr_scale
+        else:
+            # After warmup, use base scheduler
+            scheduler.step()
+        
+        # Ensure model is in training mode (BatchNorm, Dropout active)
+        model.train()
+        
         # Train
         train_loss = train_one_epoch(
             model, train_loader, optimizer, device=device,
@@ -370,21 +556,40 @@ def fit(
             epoch=epoch,
             log_interval=train_cfg.log_interval,
             gradient_accumulation_steps=train_cfg.gradient_accumulation_steps,
+            max_grad_norm=optim_cfg.max_grad_norm,
+            log_grad_norm=train_cfg.log_grad_norm,
         )
         
-        logger.info(f"Epoch {epoch}/{train_cfg.num_epochs}, Train Loss: {train_loss:.4f}")
+        # Get current learning rate
+        current_lr = optimizer.param_groups[0]['lr']
+        logger.info(
+            f"Epoch {epoch}/{train_cfg.num_epochs}, Train Loss: {train_loss:.4f}, LR: {current_lr:.2e}"
+        )
         
         # Validate
         if val_loader is not None:
+            # Ensure model is in eval mode (BatchNorm uses running stats, Dropout disabled)
+            model.eval()
             val_loss, val_acc = evaluate(model, val_loader, device=device)
             logger.info(f"Epoch {epoch}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
             
+            # Early stopping check
+            if early_stopping is not None:
+                early_stopping.step(val_acc)
+                if early_stopping.should_stop:
+                    logger.info(f"Early stopping triggered at epoch {epoch}")
+                    break
+            
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
+                # Save best model state
+                best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 logger.info(f"New best validation accuracy: {best_val_acc:.4f}")
-        
-        # Step scheduler
-        scheduler.step()
+    
+    # Restore best model state
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
+        logger.info("Restored best model state based on validation accuracy")
     
     return model
 

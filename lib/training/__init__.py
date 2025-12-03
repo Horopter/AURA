@@ -29,6 +29,8 @@ from .vit_gru import ViTGRUModel
 from .vit_transformer import ViTTransformerModel
 from .slowfast import SlowFastModel
 from .x3d import X3DModel
+from .i3d import I3DModel
+from .r2plus1d import R2Plus1DModel
 
 # Model factory
 from .model_factory import (
@@ -42,6 +44,9 @@ from .model_factory import (
 
 # Training pipeline
 from .pipeline import stage5_train_models
+
+# Feature preprocessing
+from .feature_preprocessing import remove_collinear_features, load_and_combine_features
 
 # Additional utilities
 from .trainer import (
@@ -72,6 +77,8 @@ __all__ = [
     "ViTTransformerModel",
     "SlowFastModel",
     "X3DModel",
+    "I3DModel",
+    "R2Plus1DModel",
     # Factory
     "create_model",
     "get_model_config",
@@ -81,6 +88,9 @@ __all__ = [
     "MODEL_MEMORY_CONFIGS",
     # Stage 5
     "stage5_train_models",
+    # Feature preprocessing
+    "remove_collinear_features",
+    "load_and_combine_features",
     # Utilities
     "EarlyStopping",
     "freeze_all",

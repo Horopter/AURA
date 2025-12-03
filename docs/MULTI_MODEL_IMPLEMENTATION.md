@@ -260,7 +260,7 @@ lib/
     pipeline.py               # Training pipeline
   features/
     handcrafted.py            # Feature extraction
-    downscaled.py             # Downscaled feature extraction
+    scaled.py                 # Scaled video feature extraction
     pipeline.py               # Feature extraction pipeline
   mlops/
     multimodel.py             # Multi-model pipeline

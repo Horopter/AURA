@@ -4,7 +4,7 @@ Feature extraction module.
 Provides:
 - Handcrafted feature extractors (noise, DCT, blur, boundary, codec)
 - Stage 2: Extract features from original videos
-- Stage 4: Extract features from downscaled videos
+- Stage 4: Extract features from scaled videos
 """
 
 from .handcrafted import (
@@ -17,7 +17,7 @@ from .handcrafted import (
     HandcraftedFeatureExtractor,
 )
 from .pipeline import stage2_extract_features
-from .downscaled import stage4_extract_downscaled_features
+from .scaled import stage4_extract_scaled_features
 
 
 __all__ = [
@@ -31,6 +31,6 @@ __all__ = [
     "HandcraftedFeatureExtractor",
     # Stage pipelines
     "stage2_extract_features",
-    "stage4_extract_downscaled_features",
+    "stage4_extract_scaled_features",
 ]
 

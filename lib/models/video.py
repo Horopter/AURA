@@ -649,6 +649,8 @@ class Inception3DBlock(nn.Module):
 class VariableARVideoModel(nn.Module):
     """Inception-like 3D CNN that supports variable aspect ratios via global pooling.
 
+    Optimized for efficiency with proper initialization and BatchNorm momentum.
+    
     - Input: (N, C, T, H, W) with arbitrary T, H, W.
     - Output: (N, 1) logits for binary classification.
     """
@@ -657,7 +659,7 @@ class VariableARVideoModel(nn.Module):
         super().__init__()
         self.stem = nn.Sequential(
             nn.Conv3d(in_channels, base_channels, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm3d(base_channels),
+            nn.BatchNorm3d(base_channels, momentum=0.1),  # Lower momentum for small batches
             nn.ReLU(inplace=True),
         )
 
@@ -667,6 +669,23 @@ class VariableARVideoModel(nn.Module):
         self.pool = nn.AdaptiveAvgPool3d((1, 1, 1))  # (N, C, 1, 1, 1)
         self.dropout = nn.Dropout(p=0.5)
         self.fc = nn.Linear(base_channels * 4, 1)  # binary logit
+        
+        # Initialize weights properly
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """Initialize model weights using He initialization for ReLU activations."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv3d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm3d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (N, C, T, H, W)
