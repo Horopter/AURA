@@ -41,17 +41,17 @@ def test_import_lib_models():
         pytest.fail(f"Failed to import from lib.models: {e}")
 
 
-def test_import_stage5_feature_pipeline():
-    """Test that stage5_feature_pipeline imports work."""
+def test_import_stage5_pipeline():
+    """Test that stage5 pipeline imports work."""
     try:
-        from lib.training.stage5_feature_pipeline import (
-            stage5_train_all_models,
+        from lib.training.pipeline import (
+            stage5_train_models,
         )
-        assert stage5_train_all_models is not None
-        assert callable(stage5_train_all_models)
-        print("✓ stage5_feature_pipeline imports successful")
+        assert stage5_train_models is not None
+        assert callable(stage5_train_models)
+        print("✓ stage5 pipeline imports successful")
     except ImportError as e:
-        pytest.fail(f"Failed to import from stage5_feature_pipeline: {e}")
+        pytest.fail(f"Failed to import from pipeline: {e}")
 
 
 def test_import_video_training_pipeline():
@@ -268,11 +268,11 @@ def test_run_stage5_training_imports():
     """Test that run_stage5_training.py can import all required modules."""
     try:
         # This simulates what run_stage5_training.py does
-        from lib.training.stage5_feature_pipeline import stage5_train_all_models
+        from lib.training.pipeline import stage5_train_models
         from lib.training.video_training_pipeline import FEATURE_BASED_MODELS, VIDEO_BASED_MODELS
         from lib.utils.memory import log_memory_stats
         
-        assert stage5_train_all_models is not None
+        assert stage5_train_models is not None
         assert FEATURE_BASED_MODELS is not None
         assert VIDEO_BASED_MODELS is not None
         assert log_memory_stats is not None
@@ -291,7 +291,7 @@ if __name__ == "__main__":
     # Run all test functions
     test_functions = [
         test_import_lib_models,
-        test_import_stage5_feature_pipeline,
+        test_import_stage5_pipeline,
         test_import_video_training_pipeline,
         test_import_feature_training_pipeline,
         test_import_model_factory,

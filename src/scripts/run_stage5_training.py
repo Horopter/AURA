@@ -24,24 +24,17 @@ from typing import List
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from lib.training.stage5_feature_pipeline import stage5_train_all_models
+from lib.training.pipeline import stage5_train_models
 from lib.training.video_training_pipeline import FEATURE_BASED_MODELS, VIDEO_BASED_MODELS
 from lib.utils.memory import log_memory_stats
 
-# Setup extensive logging
+# Setup logging (INFO level for production, DEBUG is too verbose)
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s [%(levelname)s] [%(name)s:%(lineno)d] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
-
-# Set specific loggers to appropriate levels
-logging.getLogger("lib").setLevel(logging.DEBUG)
-logging.getLogger("lib.training").setLevel(logging.DEBUG)
-logging.getLogger("lib.data").setLevel(logging.DEBUG)
-logging.getLogger("lib.models").setLevel(logging.DEBUG)
-logging.getLogger("lib.utils").setLevel(logging.DEBUG)
 
 
 def main():
@@ -213,23 +206,12 @@ Examples:
     logger.info("Checking prerequisites...")
     logger.info("=" * 80)
     
+    # Basic file existence check (detailed validation done in pipeline)
     if not scaled_metadata_path.exists():
         logger.error("Scaled metadata file not found: %s", scaled_metadata_path)
         logger.error("Please run Stage 3 first: python src/scripts/run_stage3_scaling.py")
         return 1
     logger.info("✓ Scaled metadata file found: %s", scaled_metadata_path)
-    
-    if not features_stage2_path.exists():
-        logger.error("Stage 2 features metadata not found: %s", features_stage2_path)
-        logger.error("Please run Stage 2 first: python src/scripts/run_stage2_features.py")
-        return 1
-    logger.info("✓ Stage 2 features metadata found: %s", features_stage2_path)
-    
-    if not features_stage4_path.exists():
-        logger.error("Stage 4 features metadata not found: %s", features_stage4_path)
-        logger.error("Please run Stage 4 first: python src/scripts/run_stage4_scaled_features.py")
-        return 1
-    logger.info("✓ Stage 4 features metadata found: %s", features_stage4_path)
     
     # Validate model types
     available_models = list(FEATURE_BASED_MODELS | VIDEO_BASED_MODELS)
@@ -243,21 +225,6 @@ Examples:
     logger.debug("Available models: %s", available_models)
     logger.debug("Feature-based: %s", FEATURE_BASED_MODELS)
     logger.debug("Video-based: %s", VIDEO_BASED_MODELS)
-    
-    # Log system information
-    try:
-        import psutil
-        import torch
-        logger.debug("System information:")
-        logger.debug("  CPU count: %d", psutil.cpu_count())
-        logger.debug("  Total memory: %.2f GB", psutil.virtual_memory().total / 1e9)
-        logger.debug("  Available memory: %.2f GB", psutil.virtual_memory().available / 1e9)
-        logger.debug("  CUDA available: %s", torch.cuda.is_available())
-        if torch.cuda.is_available():
-            logger.debug("  GPU: %s", torch.cuda.get_device_name(0))
-            logger.debug("  GPU memory: %.2f GB", torch.cuda.get_device_properties(0).total_memory / 1e9)
-    except ImportError:
-        logger.debug("psutil/torch not available, skipping system info")
     
     # Log initial memory stats
     logger.info("=" * 80)
@@ -277,18 +244,22 @@ Examples:
     stage_start = time.time()
     
     try:
-        results = stage5_train_all_models(
+        # Use pipeline defaults for batch_size/epochs (from model config)
+        # Don't hardcode - let pipeline use model-specific defaults
+        results = stage5_train_models(
             project_root=str(project_root),
             scaled_metadata_path=str(scaled_metadata_path),
             features_stage2_path=str(features_stage2_path),
             features_stage4_path=str(features_stage4_path),
             model_types=model_types,
             n_splits=args.n_splits,
+            num_frames=args.num_frames,
             output_dir=args.output_dir,
-            use_gpu=True,
-            batch_size=32,
-            epochs=100,
-            num_frames=args.num_frames
+            use_tracking=not args.no_tracking,
+            use_mlflow=not args.no_tracking,
+            train_ensemble=args.train_ensemble,
+            ensemble_method=args.ensemble_method,
+            delete_existing=args.delete_existing
         )
         
         stage_duration = time.time() - stage_start

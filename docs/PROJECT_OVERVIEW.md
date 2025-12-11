@@ -250,6 +250,64 @@ This project implements a binary video classifier for the FVC (Fake Video Classi
    - Clear separation of concerns
    - Comprehensive documentation
 
+## 5-Stage Pipeline Architecture
+
+### Stage 1: Video Augmentation
+**Input**: N original videos  
+**Output**: 11N videos (N original + 10N augmented)  
+**Location**: `lib/augmentation/pipeline.py`
+
+- Generates 10 augmentations per video (configurable, default: 1 for memory efficiency)
+- Preserves original resolution and aspect ratio
+- Augmentation types: rotation, flip, brightness, contrast, saturation, gaussian_noise, gaussian_blur, affine, elastic
+- Saves augmented videos as MP4 files
+- Creates metadata: `data/augmented_videos/augmented_metadata.arrow` (or `.parquet`/`.csv`)
+
+### Stage 2: Extract Handcrafted Features (M features)
+**Input**: 11N videos (from Stage 1)  
+**Output**: M features per video  
+**Location**: `lib/features/pipeline.py`
+
+- Extracts handcrafted features from all 11N videos
+- Features: Noise residual energy, DCT band statistics, blur/sharpness metrics, block boundary inconsistency, codec cues
+- Saves features as `.npy` files
+- Creates metadata: `data/features_stage2/features_metadata.arrow` (or `.parquet`/`.csv`)
+- M = number of features extracted (typically ~50)
+
+### Stage 3: Scale Videos
+**Input**: 11N videos (from Stage 1)  
+**Output**: 11N scaled videos  
+**Location**: `lib/scaling/pipeline.py`
+
+- Scales all videos to target max dimension (can both downscale and upscale)
+- Methods:
+  - **Letterbox resize**: Simple resize with letterboxing (default)
+  - **Autoencoder**: Pretrained Hugging Face VAE for high-quality scaling (optional)
+- Target max dimension: 112 pixels (max(width, height) = 112, configurable via `FVC_FIXED_SIZE`)
+- Preserves aspect ratio for all videos
+- Creates metadata: `data/scaled_videos/scaled_metadata.arrow` (or `.parquet`/`.csv`)
+
+### Stage 4: Extract Additional Features from Scaled Videos (P features)
+**Input**: 11N scaled videos (from Stage 3)  
+**Output**: P features per video  
+**Location**: `lib/features/scaled.py`
+
+- Extracts additional features from scaled videos
+- Same feature types as Stage 2, but from scaled videos
+- Saves features as `.npy` files
+- Creates metadata: `data/features_stage4/features_scaled_metadata.arrow` (or `.parquet`/`.csv`)
+- P = number of features extracted (typically ~50)
+
+### Stage 5: Model Training
+**Input**: Scaled videos (Stage 3) + Features (Stage 2 & 4)  
+**Output**: Trained models and metrics  
+**Location**: `lib/training/pipeline.py`
+
+- Trains multiple model architectures
+- Uses 5-fold stratified cross-validation
+- Models: Logistic Regression, SVM, Naive CNN, ViT-GRU, ViT-Transformer, SlowFast, X3D
+- Output: `data/stage5/<model_type>/` with checkpoints, metrics, and plots
+
 ## Final Architecture
 
 ### Model
@@ -399,6 +457,130 @@ See `requirements.txt` for full list. Key dependencies:
    - Model packaging
    - CLI interface
    - Batch inference API
+
+## Implemented Models
+
+### Baselines (3 models)
+1. **Logistic Regression** (`logistic_regression`) - Handcrafted features + sklearn LogisticRegression
+2. **Linear SVM** (`svm`) - Handcrafted features + sklearn LinearSVC
+3. **Naive CNN** (`naive_cnn`) - Simple 2D CNN over uniformly sampled frames
+
+### Frame→Temporal Models (2 models)
+4. **ViT-B/16 + GRU** (`vit_gru`) - Vision Transformer backbone with GRU temporal head
+5. **ViT-B/16 + Transformer** (`vit_transformer`) - Vision Transformer backbone with Transformer encoder temporal head
+
+### Spatiotemporal Models (2 models)
+6. **SlowFast** (`slowfast`) - Dual-pathway network (slow + fast pathways)
+7. **X3D** (`x3d`) - Efficient 3D CNN for video recognition
+
+## Model Architecture Details
+
+### Handcrafted Features (`lib/handcrafted_features.py`)
+
+**Features Extracted**:
+- **Noise Residual Energy**: High-pass filtering to extract noise patterns
+- **DCT Band Statistics**: DCT coefficients with DC/AC separation, low/high frequency analysis
+- **Blur/Sharpness Metrics**: Laplacian variance, gradient magnitude, Tenengrad, Brenner gradient
+- **Block Boundary Inconsistency**: Detection of compression artifacts at block boundaries
+- **Codec Cues**: Metadata extraction (bitrate, fps) via ffprobe
+
+**Caching**: Features are cached to disk to avoid recomputation across runs/folds.
+
+### Baseline Models
+
+**LogisticRegressionBaseline** (`lib/training/_linear.py`):
+- Extracts handcrafted features per video
+- Trains sklearn LogisticRegression
+- Saves feature extractor + model + scaler
+
+**SVMBaseline** (`lib/training/_svm.py`):
+- Same feature extraction
+- Trains sklearn LinearSVC
+- Converts decision function to probabilities via sigmoid
+
+**NaiveCNNBaseline** (`lib/training/_cnn.py`):
+- Simple 2D CNN: Conv2D blocks → GlobalAvgPool → FC
+- Processes frames independently, averages predictions
+- PyTorch nn.Module (can be trained with standard training loop)
+
+### Frame→Temporal Models
+
+**ViTGRUModel** (`lib/training/vit_gru.py`):
+- Backbone: `timm.create_model('vit_base_patch16_224', pretrained=True)`
+- Extracts [CLS] token (768-dim) per frame
+- Temporal head: GRU (hidden_dim=256, num_layers=2)
+- Classification: Linear(256, 1)
+
+**ViTTransformerModel** (`lib/training/vit_transformer.py`):
+- Same ViT backbone
+- Temporal head: Transformer encoder (d_model=768, nhead=8, num_layers=2)
+- Mean pooling over temporal dimension
+- Classification: Linear(768, 1)
+
+### Spatiotemporal Models
+
+**SlowFastModel** (`lib/training/slowfast.py`):
+- Uses `torchvision.models.video.slowfast_r50` if available
+- Fallback: Simplified SlowFast implementation
+- Slow pathway: 16 frames at 2 fps
+- Fast pathway: 64 frames at 8 fps
+- Fusion and binary classification head
+
+**X3DModel** (`lib/training/x3d.py`):
+- Uses `torchvision.models.video.x3d_m` (pretrained on Kinetics-400)
+- Fallback: Uses `r3d_18` as approximation
+- Binary classification head
+
+## Reusable Components
+
+### Training Utilities (`lib/training/trainer.py`)
+
+**`fit()`** - High-level training with experiment tracking
+- Handles optimizer/scheduler creation
+- Full training loop with validation
+- Checkpointing and resume capability
+- Metrics logging
+- Early stopping
+
+**`train_one_epoch()`** - Core training loop
+- Handles mixed precision (AMP)
+- Gradient accumulation
+- Dynamic loss function selection (BCE vs CrossEntropy)
+- Memory-efficient with aggressive GC
+
+**`evaluate()`** - Evaluation loop
+- Computes loss and accuracy
+- Memory-efficient evaluation
+- Dynamic loss function selection
+
+### Model Factory (`lib/training/model_factory.py`)
+
+**Centralized Model Creation**:
+- `create_model(model_type, config)`: Creates model instance
+- `get_model_config(model_type)`: Returns memory-optimized config
+- `list_available_models()`: Lists all available model types
+- `is_pytorch_model(model_type)`: Checks if model is PyTorch or sklearn
+
+**Memory-Optimized Configs** (Ultra-Conservative):
+- Baselines: Moderate batch sizes (8), minimal memory, `num_workers=0`
+- Frame→Temporal: Very small batches (1), high gradient accumulation (16x), `num_workers=0`
+- Spatiotemporal: Very small batches (1), 6 frames (reduced from 8), high gradient accumulation (16x), `num_workers=0`
+
+### Data Utilities (`lib/data/loading.py`)
+
+**`stratified_kfold()`** - K-fold cross-validation
+- Stratified splitting
+- Balanced classes
+- Handles duplicate groups (prevents data leakage)
+
+**`train_val_test_split()`** - Data splitting
+- Stratified splitting
+- Duplicate group awareness
+- Configurable ratios
+
+**`filter_existing_videos()`** - Video filtering
+- Filters missing videos
+- Optional frame count verification
 
 ## References
 

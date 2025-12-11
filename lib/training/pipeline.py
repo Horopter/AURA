@@ -93,6 +93,7 @@ class VideoConfig:
     window_stride: Optional[int] = None
     augmentation_config: Optional[dict] = None
     temporal_augmentation_config: Optional[dict] = None
+    use_scaled_videos: bool = False
 
 
 class VideoDataset(Dataset):
@@ -493,91 +494,44 @@ def stage5_train_models(
         if health.status == HealthCheckStatus.CRITICAL:
             raise ResourceExhaustedError(f"Critical system state: {health.message}")
     
-    # Load Stage 2 and Stage 4 features (optional - only used for feature combination models)
-    # These are loaded but may not be used for all model types
-    features2_df = load_metadata_flexible(features_stage2_path)
-    features4_df = load_metadata_flexible(features_stage4_path)
+    # Lazy loading: Only load features/videos if needed by any model
+    from lib.training.video_training_pipeline import is_feature_based, is_video_based
     
-    # Note: features2_df and features4_df may be None if files don't exist
-    # This is OK for models that don't use them (e.g., PyTorch models that use video data)
-    if features2_df is None:
-        logger.debug("Stage 2 features metadata not found (optional for some models)")
-    if features4_df is None:
-        logger.debug("Stage 4 features metadata not found (optional for some models)")
+    # Determine what to load based on model types
+    needs_features = any(is_feature_based(m) or "xgboost" in m for m in model_types)
+    needs_videos = any(is_video_based(m) for m in model_types)
+    
+    # Lazy load features only if any model requires them
+    features2_df = None
+    features4_df = None
+    if needs_features:
+        logger.info("Loading Stage 2 and Stage 4 features (required for feature-based models)...")
+        features2_df = load_metadata_flexible(features_stage2_path)
+        features4_df = load_metadata_flexible(features_stage4_path)
+        if features2_df is None:
+            logger.debug("Stage 2 features metadata not found (optional for some models)")
+        if features4_df is None:
+            logger.debug("Stage 4 features metadata not found (optional for some models)")
+    else:
+        logger.debug("Skipping feature loading - no feature-based models in training list")
     
     logger.info(f"Stage 5: Found {scaled_df.height} scaled videos")
     
-    # Create video config (only needed for PyTorch models)
-    # Use fixed_size=256 to match Stage 3 output (videos scaled to max(width, height) = 256)
-    # For non-PyTorch models (logistic_regression, svm), VideoConfig is not needed
-    # So we'll use a fallback if import fails - only fail if we actually need it for PyTorch models
-    
-    # Define a minimal VideoConfig fallback class
-    @dataclass
-    class MinimalVideoConfig:
-        """Minimal VideoConfig fallback when lib.models is not available."""
-        num_frames: int = 16
-        fixed_size: Optional[int] = None
-        max_size: Optional[int] = None
-        img_size: Optional[int] = None
-        rolling_window: bool = False
-        window_size: Optional[int] = None
-        window_stride: Optional[int] = None
-        augmentation_config: Optional[dict] = None
-        temporal_augmentation_config: Optional[dict] = None
-    
-    # Try to import VideoConfig, but use fallback if it doesn't exist
-    VideoConfig = None
-    
-    if project_root_str not in sys.path:
-        sys.path.insert(0, project_root_str)
-    
-    # Try to import VideoConfig (non-critical for non-PyTorch models)
+    # Import VideoConfig - fail fast if not available (required for PyTorch models)
+    # lib.models should always be available in Stage 5
     try:
         from lib.models import VideoConfig
-        logger.debug("Successfully imported VideoConfig from lib.models")
-    except ImportError:
-        try:
-            # Try importlib as fallback
-            models_init = project_root_path / 'lib' / 'models' / '__init__.py'
-            if models_init.exists():
-                spec = importlib.util.spec_from_file_location("lib.models", models_init)
-                if spec and spec.loader:
-                    models_module = importlib.util.module_from_spec(spec)
-                    sys.modules['lib.models'] = models_module
-                    spec.loader.exec_module(models_module)
-                    VideoConfig = models_module.VideoConfig
-                    logger.debug("Successfully imported VideoConfig using importlib")
-        except Exception:
-            pass
-        
-        if VideoConfig is None:
-            try:
-                video_py = project_root_path / 'lib' / 'models' / 'video.py'
-                if video_py.exists():
-                    spec = importlib.util.spec_from_file_location("lib.models.video", video_py)
-                    if spec and spec.loader:
-                        video_module = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(video_module)
-                        VideoConfig = video_module.VideoConfig
-                        logger.debug("Successfully imported VideoConfig from video.py")
-            except Exception:
-                pass
-    
-    # Use fallback if import failed
-    if VideoConfig is None:
-        logger.warning(
-            "Could not import VideoConfig from lib.models. Using minimal fallback. "
-            "This is OK for non-PyTorch models (logistic_regression, svm), "
-            "but PyTorch models will fail if lib/models is missing. "
-            "Please ensure lib/models directory exists on the server."
-        )
-        VideoConfig = MinimalVideoConfig
+    except ImportError as e:
+        raise ImportError(
+            f"CRITICAL: Cannot import VideoConfig from lib.models. "
+            f"lib/models must be available for Stage 5. Error: {e}"
+        ) from e
     
     # Create video config (will be used only for PyTorch models)
+    # Always use scaled videos - augmentation done in Stage 1, scaling in Stage 3
     video_config = VideoConfig(
         num_frames=num_frames,
-        fixed_size=256,
+        use_scaled_videos=True  # Stage 5 only trains - all preprocessing done in earlier stages
     )
     
     results = {}
@@ -700,81 +654,14 @@ def stage5_train_models(
                     # Note: sys and importlib.util are already imported at module level
                     # project_root_path is already resolved at function start
                     
-                    if project_root_str not in sys.path:
-                        sys.path.insert(0, project_root_str)
-                    
-                    # Try multiple import strategies with comprehensive error handling
-                    VideoDataset = None
-                    import_error = None
-                    
-                    # Strategy 1: Direct import (preferred)
+                    # Import VideoDataset - fail fast if not available (required for video-based models)
                     try:
                         from lib.models import VideoDataset
-                        logger.debug("Successfully imported VideoDataset using direct import")
                     except ImportError as e:
-                        import_error = e
-                        logger.debug(f"Direct import failed: {e}, trying alternative methods...")
-                        
-                        # Strategy 2: Import using importlib with explicit path
-                        try:
-                            models_init = project_root_path / 'lib' / 'models' / '__init__.py'
-                            logger.debug(f"Attempting importlib import from: {models_init}")
-                            if models_init.exists():
-                                spec = importlib.util.spec_from_file_location("lib.models", models_init)
-                                if spec and spec.loader:
-                                    if 'lib.models' not in sys.modules:
-                                        models_module = importlib.util.module_from_spec(spec)
-                                        sys.modules['lib.models'] = models_module
-                                        spec.loader.exec_module(models_module)
-                                    VideoDataset = sys.modules['lib.models'].VideoDataset
-                                    logger.debug("Successfully imported VideoDataset using importlib")
-                            else:
-                                logger.warning(f"lib/models/__init__.py not found at: {models_init}")
-                        except Exception as e:
-                            logger.debug(f"Importlib import failed: {e}")
-                        
-                        # Strategy 3: Try importing from video.py directly
-                        if VideoDataset is None:
-                            try:
-                                video_py = project_root_path / 'lib' / 'models' / 'video.py'
-                                logger.debug(f"Attempting direct import from video.py: {video_py}")
-                                if video_py.exists():
-                                    spec = importlib.util.spec_from_file_location("lib.models.video", video_py)
-                                    if spec and spec.loader:
-                                        video_module = importlib.util.module_from_spec(spec)
-                                        spec.loader.exec_module(video_module)
-                                        VideoDataset = video_module.VideoDataset
-                                        logger.debug("Successfully imported VideoDataset from video.py")
-                                else:
-                                    logger.warning(f"lib/models/video.py not found at: {video_py}")
-                            except Exception as e:
-                                logger.debug(f"Direct video.py import failed: {e}")
-                    
-                    # Final check and error reporting
-                    if VideoDataset is None:
-                        # Comprehensive diagnostic information
-                        models_dir = project_root_path / 'lib' / 'models'
-                        models_init = models_dir / '__init__.py'
-                        video_py = models_dir / 'video.py'
-                        
-                        diagnostics = {
-                            "project_root": str(project_root_path),
-                            "project_root_exists": project_root_path.exists(),
-                            "lib_dir_exists": (project_root_path / 'lib').exists(),
-                            "lib_models_dir_exists": models_dir.exists(),
-                            "lib_models_init_exists": models_init.exists() if models_dir.exists() else False,
-                            "lib_models_video_exists": video_py.exists() if models_dir.exists() else False,
-                            "python_path_first_3": sys.path[:3],
-                            "original_import_error": str(import_error) if import_error else None,
-                        }
-                        
-                        error_msg = (
-                            f"CRITICAL: Failed to import VideoDataset from lib.models after trying all strategies.\n"
-                            f"Diagnostics: {diagnostics}\n"
-                            f"Please ensure lib/models directory exists and contains __init__.py and video.py"
-                        )
-                        logger.error(error_msg)
-                        raise ImportError(error_msg) from import_error
+                        raise ImportError(
+                            f"Cannot import VideoDataset from lib.models. "
+                            f"Required for video-based models. Error: {e}"
+                        ) from e
                     train_dataset = VideoDataset(
                         train_df,
                         project_root=project_root_str_orig,

@@ -155,10 +155,12 @@ class VideoConfig:
     rolling_window: bool = False  # If True, use rolling windows instead of uniform sampling
     window_size: Optional[int] = None  # Size of rolling window (defaults to num_frames)
     window_stride: Optional[int] = None  # Stride between windows (defaults to window_size // 2)
-    # Augmentation configuration (see lib.augmentation.transforms for details)
-    augmentation_config: Optional[dict] = None  # Spatial augmentation parameters
-    temporal_augmentation_config: Optional[dict] = None  # Temporal augmentation parameters
-    # If True, videos are already scaled/processed - skip resizing and augmentation, only apply normalization
+    # Augmentation configuration (DEPRECATED: Augmentation done in Stage 1, not Stage 5)
+    # These are kept for backward compatibility but ignored when use_scaled_videos=True
+    augmentation_config: Optional[dict] = None  # Spatial augmentation parameters (not used in Stage 5)
+    temporal_augmentation_config: Optional[dict] = None  # Temporal augmentation parameters (not used in Stage 5)
+    # If True, videos are already scaled/processed in Stage 3 - skip all transforms, only apply normalization
+    # Stage 5 should ALWAYS use scaled videos (use_scaled_videos=True)
     use_scaled_videos: bool = False
 
 
@@ -225,6 +227,9 @@ def build_frame_transforms(
     max_size: Optional[int] = None
 ) -> transforms.Compose:
     """Build a per-frame transform pipeline.
+    
+    NOTE: This is LEGACY code. In Stage 5, videos should already be scaled (use_scaled_videos=True),
+    so this function should not be called. Augmentation is done in Stage 1, scaling in Stage 3.
 
     Args:
         train: If True, apply data augmentations (flip, color jitter)
@@ -354,8 +359,9 @@ class VideoDataset(Dataset):
         use_scaled_videos = getattr(self.config, 'use_scaled_videos', False)
         
         if use_scaled_videos:
-            # Scaled videos are already processed - only apply normalization
-            logger.info("Using scaled videos: skipping resizing and augmentation, applying normalization only")
+            # Scaled videos are already processed in Stage 3 - only apply normalization
+            # No resizing, no augmentation (augmentation done in Stage 1, scaling done in Stage 3)
+            logger.debug("Using scaled videos: skipping all transforms, applying normalization only")
             self._frame_transform = transforms.Compose([
                 transforms.functional.to_pil_image,
                 transforms.ToTensor(),
@@ -364,7 +370,9 @@ class VideoDataset(Dataset):
                 transforms.Normalize(mean=IMG_MEAN, std=IMG_STD)
             ])
         else:
-            # Use comprehensive augmentations if available, otherwise fallback to basic
+            # Legacy path: Use comprehensive augmentations if available, otherwise fallback to basic
+            # This path should not be used in Stage 5 (all videos should be scaled)
+            logger.warning("Not using scaled videos - this should not happen in Stage 5. Augmentation should be done in Stage 1.")
             try:
                 from lib.augmentation.transforms import build_comprehensive_frame_transforms
                 self._frame_transform, self._post_tensor_transform = build_comprehensive_frame_transforms(
@@ -406,39 +414,10 @@ class VideoDataset(Dataset):
         label_value = row["label"]
         label_idx = self.label_to_idx[label_value]
         
-        # Check if this is a pre-computed augmented clip (.pt or .pth file)
-        if video_path.endswith('.pt') or video_path.endswith('.pth'):
-            try:
-                from lib.augmentation.pregenerate import load_precomputed_clip
-                clip = load_precomputed_clip(video_path)
-                # Ensure clip has correct shape: (T, C, H, W)
-                if clip.dim() == 4:
-                    # Verify frame count matches config (allow some flexibility)
-                    if clip.shape[0] == self.config.num_frames:
-                        return clip, torch.tensor(label_idx, dtype=torch.long)
-                    else:
-                        logger.warning(
-                            "Pre-computed clip has wrong frame count: %d. Expected %d. Resampling...",
-                            clip.shape[0], self.config.num_frames
-                        )
-                        # Resample frames to match config
-                        if clip.shape[0] > self.config.num_frames:
-                            # Uniformly sample (uniform_sample_indices is already imported at module level)
-                            indices = uniform_sample_indices(clip.shape[0], self.config.num_frames)
-                            clip = clip[indices]
-                        else:
-                            # Pad with last frame
-                            last_frame = clip[-1:]
-                            while clip.shape[0] < self.config.num_frames:
-                                clip = torch.cat([clip, last_frame], dim=0)
-                        return clip, torch.tensor(label_idx, dtype=torch.long)
-                else:
-                    logger.warning("Pre-computed clip has wrong dimensions: %s. Expected 4D (T, C, H, W). Falling back.",
-                                 str(clip.shape))
-            except Exception as e:
-                logger.warning("Failed to load pre-computed clip %s: %s. Falling back to video loading.", 
-                             video_path, str(e))
-                # Fall through to regular video loading
+        # DEAD CODE (Stage 5): Pre-computed clip loading not used in Stage 5
+        # Stage 5 uses scaled videos from Stage 3, not pre-computed clips
+        # This code path is kept for backward compatibility but is not executed in Stage 5 pipeline
+        # Removed: 32 lines of pre-computed clip loading logic (lines 417-449)
 
         # Check if video file exists
         if not os.path.exists(video_path):
@@ -524,34 +503,34 @@ class VideoDataset(Dataset):
         
         frames: List[torch.Tensor] = []
 
-        # Apply temporal augmentations if available
-        try:
-            from lib.augmentation.transforms import apply_temporal_augmentations
-            use_temporal_aug = True
-            temporal_config = getattr(self.config, 'temporal_augmentation_config', None) or {}
-        except ImportError:
-            use_temporal_aug = False
-            temporal_config = {}
+        # Check if using scaled videos - if so, skip all augmentations
+        use_scaled_videos = getattr(self.config, 'use_scaled_videos', False)
 
         for i in indices:
             frame = video[i].numpy().astype(np.uint8)  # (H, W, C)
             frame_tensor = self._frame_transform(frame)  # (C, H, W)
             
-            # Apply post-tensor augmentations if available
+            # Apply post-tensor augmentations if available (only normalization for scaled videos)
             if self._post_tensor_transform is not None:
                 frame_tensor = self._post_tensor_transform(frame_tensor)
             
             frames.append(frame_tensor)
         
-        # Apply temporal augmentations (frame dropping, duplication, reversal)
-        if use_temporal_aug and self.train:
-            frames = apply_temporal_augmentations(
-                frames,
-                train=self.train,
-                frame_drop_prob=temporal_config.get('frame_drop_prob', 0.1),
-                frame_dup_prob=temporal_config.get('frame_dup_prob', 0.1),
-                reverse_prob=temporal_config.get('reverse_prob', 0.1),
-            )
+        # No temporal augmentations when using scaled videos (augmentation done in Stage 1)
+        # Temporal augmentations are only applied if NOT using scaled videos
+        if not use_scaled_videos and self.train:
+            try:
+                from lib.augmentation.transforms import apply_temporal_augmentations
+                temporal_config = getattr(self.config, 'temporal_augmentation_config', None) or {}
+                frames = apply_temporal_augmentations(
+                    frames,
+                    train=self.train,
+                    frame_drop_prob=temporal_config.get('frame_drop_prob', 0.1),
+                    frame_dup_prob=temporal_config.get('frame_dup_prob', 0.1),
+                    reverse_prob=temporal_config.get('reverse_prob', 0.1),
+                )
+            except ImportError:
+                pass  # Temporal augmentations not available, skip
 
         # Check if we have frames to stack
         if len(frames) == 0:

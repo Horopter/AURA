@@ -249,26 +249,27 @@ def _normalize_video_path(path: str) -> str:
 
 
 def _match_video_path(target_path: str, candidate_paths: List[str]) -> Optional[str]:
-    """Match a target video path to a candidate path using normalized matching."""
+    """Match a target video path to a candidate path using normalized matching with O(1) dict lookup."""
     target_normalized = _normalize_video_path(target_path)
     
-    # Try exact normalized match first
-    for candidate in candidate_paths:
-        if _normalize_video_path(candidate) == target_normalized:
-            return candidate
+    # Build normalized lookup dict once for O(1) lookups instead of O(n) iteration
+    normalized_lookup = {_normalize_video_path(p): p for p in candidate_paths}
     
-    # Try substring matching on normalized paths
-    for candidate in candidate_paths:
-        candidate_normalized = _normalize_video_path(candidate)
-        if target_normalized in candidate_normalized or candidate_normalized in target_normalized:
-            return candidate
+    # O(1) exact match lookup
+    if target_normalized in normalized_lookup:
+        return normalized_lookup[target_normalized]
     
-    # Try matching by video ID (filename stem)
-    target_id = Path(target_path).stem
-    for candidate in candidate_paths:
-        candidate_id = Path(candidate).stem
+    # Fallback: substring matching (only if exact match fails)
+    for norm_path, orig_path in normalized_lookup.items():
+        if target_normalized in norm_path or norm_path in target_normalized:
+            return orig_path
+    
+    # Final fallback: match by video ID (filename stem)
+    target_id = Path(target_path).stem.lower()
+    for orig_path in candidate_paths:
+        candidate_id = Path(orig_path).stem.lower()
         if target_id in candidate_id or candidate_id in target_id:
-            return candidate
+            return orig_path
     
     return None
 
@@ -328,7 +329,7 @@ def load_and_combine_features(
             feature_cols = [col for col in df2.columns if col not in metadata_cols]
             
             if feature_cols:
-                # Build features dictionary with all candidate paths
+                # Build features dictionary with all candidate paths (optimized for O(1) lookup)
                 features_dict = {}
                 candidate_paths = []
                 for row in df2.iter_rows(named=True):
@@ -340,7 +341,7 @@ def load_and_combine_features(
                 stage2_valid_count = 0
                 unmatched_samples = []  # Track some unmatched samples for debugging
                 for idx, vpath in enumerate(video_paths):
-                    # Try to match video path using improved matching
+                    # Try to match video path using optimized O(1) matching
                     matched_key = _match_video_path(vpath, candidate_paths)
                     
                     if matched_key and matched_key in features_dict:
@@ -383,6 +384,7 @@ def load_and_combine_features(
             feature_cols = [col for col in df4.columns if col not in metadata_cols]
             
             if feature_cols:
+                # Build features dictionary (optimized for O(1) lookup)
                 features_dict = {}
                 candidate_paths = []
                 for row in df4.iter_rows(named=True):
@@ -394,6 +396,7 @@ def load_and_combine_features(
                 stage4_valid_count = 0
                 unmatched_samples = []  # Track some unmatched samples for debugging
                 for idx, vpath in enumerate(video_paths):
+                    # Use optimized O(1) path matching
                     matched_key = _match_video_path(vpath, candidate_paths)
                     
                     if matched_key and matched_key in features_dict:

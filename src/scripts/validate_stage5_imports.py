@@ -92,14 +92,14 @@ def validate_imports():
         traceback.print_exc()
     
     # Test 2: stage5_feature_pipeline imports
-    logger.info("\n[2/8] Testing stage5_feature_pipeline imports...")
-    logger.debug("Attempting to import stage5_train_all_models from lib.training.stage5_feature_pipeline")
+    logger.info("\n[2/8] Testing stage5 pipeline imports...")
+    logger.debug("Attempting to import stage5_train_models from lib.training.pipeline")
     try:
-        from lib.training.stage5_feature_pipeline import stage5_train_all_models
-        logger.debug(f"✓ stage5_train_all_models imported: {stage5_train_all_models}")
-        logger.info("  ✓ stage5_feature_pipeline imports successful")
+        from lib.training.pipeline import stage5_train_models
+        logger.debug(f"✓ stage5_train_models imported: {stage5_train_models}")
+        logger.info("  ✓ stage5 pipeline imports successful")
     except ImportError as e:
-        error_msg = f"Failed to import from stage5_feature_pipeline: {e}"
+        error_msg = f"Failed to import from pipeline: {e}"
         errors.append(error_msg)
         logger.error(f"  ✗ {error_msg}")
         logger.exception("Full traceback:")
@@ -238,8 +238,8 @@ def validate_imports():
     logger.info("\n[8/8] Testing run_stage5_training.py imports...")
     logger.debug("Testing imports needed by run_stage5_training.py")
     try:
-        from lib.training.stage5_feature_pipeline import stage5_train_all_models
-        logger.debug("✓ stage5_train_all_models imported")
+        from lib.training.pipeline import stage5_train_models
+        logger.debug("✓ stage5_train_models imported")
         from lib.training.video_training_pipeline import FEATURE_BASED_MODELS, VIDEO_BASED_MODELS
         logger.debug(f"✓ FEATURE_BASED_MODELS: {FEATURE_BASED_MODELS}")
         logger.debug(f"✓ VIDEO_BASED_MODELS: {VIDEO_BASED_MODELS}")

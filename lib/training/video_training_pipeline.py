@@ -121,24 +121,14 @@ def train_video_model(
     
     logger.info(f"Training {model_type} with scaled videos: sampling {num_frames} frames per video (uniformly across video duration)")
     
-    # Create video config
-    # For variable_ar_cnn, use max_size instead of fixed_size
-    if model_type == "variable_ar_cnn":
-        video_config = VideoConfig(
-            num_frames=num_frames,
-            max_size=256,  # Variable aspect ratio
-            img_size=None,
-            use_scaled_videos=True  # Scaled videos already exist - skip transforms
-        )
-        use_variable_ar = True
-    else:
-        video_config = VideoConfig(
-            num_frames=num_frames,
-            fixed_size=256,  # Fixed size for most models
-            img_size=None,
-            use_scaled_videos=True  # Scaled videos already exist - skip transforms
-        )
-        use_variable_ar = False
+    # Create video config - always use scaled videos (from Stage 3)
+    # No resizing, no augmentation - videos are already processed
+    # fixed_size/max_size are ignored when use_scaled_videos=True, but kept for compatibility
+    video_config = VideoConfig(
+        num_frames=num_frames,
+        use_scaled_videos=True  # Always use scaled videos - augmentation done in Stage 1, scaling in Stage 3
+    )
+    use_variable_ar = (model_type == "variable_ar_cnn")
     
     # Get model memory config for batch size and gradient accumulation
     model_mem_config = get_model_config(model_type)

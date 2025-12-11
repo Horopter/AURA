@@ -420,6 +420,8 @@ def train_feature_model(
     def model_factory(input_dim):
         return create_feature_model(architecture, input_dim, **model_params)
     
+    # 5-fold CV on train+val (validates best hyperparameters found in grid search)
+    # CV trains models on folds of train+val, providing validation metrics
     cv_results = train_model_with_cv(
         model_factory,
         input_dim,
@@ -436,12 +438,13 @@ def train_feature_model(
         use_gpu=use_gpu
     )
     
-    # Train final_model on full training+validation set
-    logger.info("Training final model on full training+validation set...")
+    # Train final model once on full train+val set with best hyperparameters
+    # (CV validated hyperparameters, now train on full data for final test evaluation)
+    logger.info("Training final model on full training+validation set with best hyperparameters...")
     final_preprocessor.fit(X_trainval)
     X_trainval_processed = final_preprocessor.transform(X_trainval)
     
-    # Create dataset and loader for full training
+    # Create dataset and loader for final training
     trainval_dataset = FeatureDataset(X_trainval_processed, y_trainval, feature_names)
     trainval_loader = DataLoader(trainval_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     
@@ -453,7 +456,7 @@ def train_feature_model(
     )
     criterion = nn.BCEWithLogitsLoss()
     
-    # Train final model
+    # Train final model (simplified - no redundant validation since CV already validated)
     final_model.train()
     for epoch in range(epochs):
         epoch_loss = 0.0
@@ -472,7 +475,7 @@ def train_feature_model(
         if (epoch + 1) % 20 == 0:
             logger.info(f"Final model training epoch {epoch + 1}/{epochs}: loss={epoch_loss/len(trainval_loader):.4f}")
     
-    # Ensure model is on device after training
+    # Ensure model is on device
     final_model = final_model.to(device)
     for param in final_model.parameters():
         if param.device != device:
