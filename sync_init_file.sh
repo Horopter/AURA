@@ -14,3 +14,4 @@ ssh santoshd@greatlakes.arc-ts.umich.edu "head -45 /scratch/si670f25_class_root/
 
 echo ""
 echo "Done!"
+

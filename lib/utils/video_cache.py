@@ -154,9 +154,22 @@ def get_video_metadata(
                 pass
 
 
-def clear_cache():
-    """Clear in-memory cache."""
+def clear_cache(cache_file: Optional[Path] = None):
+    """
+    Clear in-memory cache and optionally persistent cache file.
+    
+    Args:
+        cache_file: Optional path to persistent cache file to delete
+    """
     _video_metadata_cache.clear()
+    
+    # Clear persistent cache file if provided
+    if cache_file and cache_file.exists():
+        try:
+            cache_file.unlink()
+            logger.info(f"Cleared persistent cache file: {cache_file}")
+        except Exception as e:
+            logger.warning(f"Failed to delete persistent cache file {cache_file}: {e}")
 
 
 __all__ = [

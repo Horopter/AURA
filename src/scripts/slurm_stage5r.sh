@@ -7,7 +7,7 @@
 # Usage:
 #   sbatch src/scripts/slurm_stage5_slowfast.sh
 
-#SBATCH --job-name=fvc_stage5_slowfast
+#SBATCH --job-name=fvc_stage5r
 #SBATCH --account=si670f25_class
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
@@ -235,7 +235,7 @@ log "Experiment tracking: $USE_TRACKING"
 log "Delete existing: $DELETE_EXISTING"
 
 STAGE5_START=$(date +%s)
-LOG_FILE="$ORIG_DIR/logs/stage5/slowfast_${SLURM_JOB_ID:-$$}.log"
+LOG_FILE="$ORIG_DIR/logs/stage5/stage5r_${SLURM_JOB_ID:-$$}.log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
 cd "$ORIG_DIR" || FEATURES_STAGE2="$ORIG_DIR/$FEATURES_STAGE2_DIR/features_metadata.arrow"  # Dummy path

@@ -7,7 +7,7 @@
 # Usage:
 #   sbatch src/scripts/slurm_stage5_timesformer.sh
 
-#SBATCH --job-name=fvc_stage5_timesformer
+#SBATCH --job-name=fvc_stage5m
 #SBATCH --account=si670f25_class
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
@@ -197,7 +197,7 @@ log "Experiment tracking: $USE_TRACKING"
 log "Delete existing: $DELETE_EXISTING"
 
 STAGE5_START=$(date +%s)
-LOG_FILE="$ORIG_DIR/logs/stage5/timesformer_${SLURM_JOB_ID:-$$}.log"
+LOG_FILE="$ORIG_DIR/logs/stage5/stage5m_${SLURM_JOB_ID:-$$}.log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
 cd "$ORIG_DIR" || exit 1

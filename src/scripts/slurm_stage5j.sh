@@ -7,7 +7,7 @@
 # Usage:
 #   sbatch src/scripts/slurm_stage5_xgboost_vit_transformer.sh
 
-#SBATCH --job-name=fvc_stage5_xgboost_vit_transformer
+#SBATCH --job-name=fvc_stage5j
 #SBATCH --account=si670f25_class
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
@@ -235,7 +235,7 @@ log "Experiment tracking: $USE_TRACKING"
 log "Delete existing: $DELETE_EXISTING"
 
 STAGE5_START=$(date +%s)
-LOG_FILE="$ORIG_DIR/logs/stage5/xgboost_vit_transformer_${SLURM_JOB_ID:-$$}.log"
+LOG_FILE="$ORIG_DIR/logs/stage5/stage5j_${SLURM_JOB_ID:-$$}.log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
 cd "$ORIG_DIR" || FEATURES_STAGE2="$ORIG_DIR/$FEATURES_STAGE2_DIR/features_metadata.arrow"  # Dummy path

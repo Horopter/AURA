@@ -197,7 +197,7 @@ log "Experiment tracking: $USE_TRACKING"
 log "Delete existing: $DELETE_EXISTING"
 
 STAGE5_START=$(date +%s)
-LOG_FILE="$ORIG_DIR/logs/stage5/_${SLURM_JOB_ID:-$$}.log"
+LOG_FILE="$ORIG_DIR/logs/stage5/stage5u_${SLURM_JOB_ID:-$$}.log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
 cd "$ORIG_DIR" || exit 1

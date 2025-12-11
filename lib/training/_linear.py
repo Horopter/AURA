@@ -127,7 +127,7 @@ class LogisticRegressionBaseline:
             # NOTE: Collinearity removal should already be done before splits in the main pipeline
             # We load without removing collinearity here to avoid doing it multiple times
             try:
-                features, feature_names, kept_indices = load_and_combine_features(
+                features, feature_names, kept_indices, valid_video_indices = load_and_combine_features(
                     features_stage2_path=stage2_path,
                     features_stage4_path=stage4_path,
                     video_paths=video_paths,
@@ -144,6 +144,14 @@ class LogisticRegressionBaseline:
                     "Do NOT re-extract features during training."
                 )
                 raise
+        
+        # Filter to valid videos if needed
+        if valid_video_indices is not None and len(valid_video_indices) > 0:
+            original_count = len(video_paths)
+            features = features[valid_video_indices]
+            video_paths = [video_paths[i] for i in valid_video_indices]
+            labels = [labels[i] for i in valid_video_indices]
+            logger.info(f"Filtered to {len(video_paths)}/{original_count} videos with valid features")
         
         # Validate features
         if features is None or features.size == 0:
@@ -245,7 +253,7 @@ class LogisticRegressionBaseline:
             aggressive_gc(clear_cuda=False)
         else:
             # Load and combine features
-            features, _, _ = load_and_combine_features(
+            features, _, _, _ = load_and_combine_features(
                 features_stage2_path=stage2_path,
                 features_stage4_path=stage4_path,
                 video_paths=video_paths,

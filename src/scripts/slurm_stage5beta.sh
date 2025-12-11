@@ -1,21 +1,21 @@
 #!/bin/bash
 #
-# SLURM Batch Script for Stage 5: naive_cnn Training
+# SLURM Batch Script for Stage 5BETA: Gradient Boosting Models Training
 #
-# Trains naive_cnn model using scaled videos and extracted features.
+# Trains XGBoost, LightGBM, and CatBoost on Stage 2/4 features.
 #
 # Usage:
-#   sbatch src/scripts/slurm_stage5_naive_cnn.sh
+#   sbatch src/scripts/slurm_stage5beta.sh
 
-#SBATCH --job-name=fvc_stage5c
+#SBATCH --job-name=fvc_stage5beta
 #SBATCH --account=si670f25_class
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=1
 #SBATCH --time=1-00:00:00
-#SBATCH --output=logs/stage5/stage5c-%j.out
-#SBATCH --error=logs/stage5/stage5c-%j.err
+#SBATCH --output=logs/stage5/stage5beta-%j.out
+#SBATCH --error=logs/stage5/stage5beta-%j.err
 #SBATCH --mail-user=santoshd@umich.edu,urvim@umich.edu,suzanef@umich.edu
 #SBATCH --mail-type=FAIL,TIME_LIMIT,NODE_FAIL
 
@@ -68,7 +68,7 @@ log() {
 log "Activating virtual environment: $VENV_DIR"
 if [ ! -d "$VENV_DIR" ]; then
     log "✗ ERROR: Virtual environment not found: $VENV_DIR"
-    FEATURES_STAGE2="$ORIG_DIR/$FEATURES_STAGE2_DIR/features_metadata.arrow"  # Dummy path
+    exit 1
 fi
 
 source "$VENV_DIR/bin/activate"
@@ -89,7 +89,7 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 # ============================================================================
 
 log "=========================================="
-log "STAGE 5: naive_cnn MODEL TRAINING JOB"
+log "STAGE 5BETA: Gradient Boosting Models Training JOB"
 log "=========================================="
 log "Host:        $(hostname)"
 log "Date:        $(date -Is)"
@@ -106,38 +106,17 @@ log "=========================================="
 log "Verifying prerequisites..."
 
 # Check critical Python packages
-PREREQ_PACKAGES=("torch" "torchvision" "polars" "numpy" "scikit-learn" "timm" "opencv-python" "av" "scipy" "joblib")
+PREREQ_PACKAGES=("sklearn" "numpy" "scipy" "joblib" "matplotlib")
 
 MISSING_PACKAGES=()
 
-
 for pkg in "${PREREQ_PACKAGES[@]}"; do
     case "$pkg" in
-        "opencv-python")
-            if ! python -c "import cv2" 2>/dev/null; then
-                MISSING_PACKAGES+=("$pkg")
-            else
-                log "✓ $pkg (cv2) found"
-            fi
-            ;;
-        "scikit-learn")
+        "sklearn")
             if ! python -c "import sklearn" 2>/dev/null; then
                 MISSING_PACKAGES+=("$pkg")
             else
                 log "✓ $pkg (sklearn) found"
-            fi
-            ;;
-        "torch"|"torchvision"|"timm")
-            # These packages may fail to import in CPU-only check environment but work fine with GPU
-            # If package is installed (via pip), trust it will work at runtime
-            if pip show "$pkg" >/dev/null 2>&1; then
-                log "✓ $pkg found (installed via pip)"
-            elif python -c "import pkg_resources; pkg_resources.get_distribution('$pkg')" 2>/dev/null; then
-                log "✓ $pkg found (installed via pkg_resources)"
-            elif timeout 10 python -c "import $pkg" 2>/dev/null; then
-                log "✓ $pkg found (import successful)"
-            else
-                MISSING_PACKAGES+=("$pkg")
             fi
             ;;
         *)
@@ -150,13 +129,30 @@ for pkg in "${PREREQ_PACKAGES[@]}"; do
     esac
 done
 
+# Check gradient boosting libraries (optional, will warn if missing)
+if ! python -c "import xgboost" 2>/dev/null; then
+    log "⚠ WARNING: XGBoost not found (will skip)"
+else
+    log "✓ xgboost found"
+fi
+
+if ! python -c "import lightgbm" 2>/dev/null; then
+    log "⚠ WARNING: LightGBM not found (will skip)"
+else
+    log "✓ lightgbm found"
+fi
+
+if ! python -c "import catboost" 2>/dev/null; then
+    log "⚠ WARNING: CatBoost not found (will skip)"
+else
+    log "✓ catboost found"
+fi
+
 if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     log "✗ ERROR: Missing required packages: ${MISSING_PACKAGES[*]}"
     log "  Install with: pip install -r requirements.txt"
-    FEATURES_STAGE2="$ORIG_DIR/$FEATURES_STAGE2_DIR/features_metadata.arrow"  # Dummy path
+    exit 1
 fi
-
-# WARNING_PACKAGES removed - if package is installed, we trust it will work at runtime
 
 # Verify previous stage outputs (try Arrow first, then Parquet, then CSV)
 SCALED_METADATA_DIR="${FVC_STAGE3_OUTPUT_DIR:-data/scaled_videos}"
@@ -173,7 +169,7 @@ if [ -z "$SCALED_METADATA" ]; then
     log "✗ ERROR: Stage 3 output not found in $ORIG_DIR/$SCALED_METADATA_DIR/"
     log "  Expected: scaled_metadata.arrow, scaled_metadata.parquet, or scaled_metadata.csv"
     log "  Run Stage 3 first: sbatch src/scripts/slurm_stage3_scaling.sh"
-    FEATURES_STAGE2="$ORIG_DIR/$FEATURES_STAGE2_DIR/features_metadata.arrow"  # Dummy path
+    exit 1
 fi
 
 FEATURES_STAGE2_DIR="${FVC_STAGE2_OUTPUT_DIR:-data/features_stage2}"
@@ -187,10 +183,10 @@ for ext in arrow parquet csv; do
     fi
 done
 if [ -z "$FEATURES_STAGE2" ]; then
-    log "⚠ WARNING: Stage 2 output not found (optional for baseline models) in $ORIG_DIR/$FEATURES_STAGE2_DIR/"
+    log "✗ ERROR: Stage 2 output not found in $ORIG_DIR/$FEATURES_STAGE2_DIR/"
     log "  Expected: features_metadata.arrow, features_metadata.parquet, or features_metadata.csv"
-    log "  Baseline models will extract features directly from videos"
-    FEATURES_STAGE2="$ORIG_DIR/$FEATURES_STAGE2_DIR/features_metadata.arrow"  # Dummy path
+    log "  Run Stage 2 first: sbatch src/scripts/slurm_stage2_features.sh"
+    exit 1
 fi
 
 FEATURES_STAGE4_DIR="${FVC_STAGE4_OUTPUT_DIR:-data/features_stage4}"
@@ -203,82 +199,49 @@ for ext in arrow parquet csv; do
         break
     fi
 done
+# Stage 4 is optional
 if [ -z "$FEATURES_STAGE4" ]; then
-    log "⚠ WARNING: Stage 4 output not found (optional for baseline models) in $ORIG_DIR/$FEATURES_STAGE4_DIR/"
+    log "⚠ WARNING: Stage 4 output not found (optional)"
     log "  Expected: features_scaled_metadata.arrow, features_scaled_metadata.parquet, or features_scaled_metadata.csv"
-    log "  Baseline models will extract features directly from videos"
-    FEATURES_STAGE2="$ORIG_DIR/$FEATURES_STAGE2_DIR/features_metadata.arrow"  # Dummy path
+    FEATURES_STAGE4=""
 fi
 
 log "✅ All prerequisites verified"
 
 # ============================================================================
-# Stage 5 Execution
+# Initialize Log File and Python Command
 # ============================================================================
 
-log "=========================================="
-log "Starting Stage 5: naive_cnn Model Training"
-log "=========================================="
-
-MODEL_TYPE="naive_cnn"
-NUM_FRAMES="${FVC_NUM_FRAMES:-1000}"
-N_SPLITS="${FVC_N_SPLITS:-5}"
-OUTPUT_DIR="${FVC_STAGE5_OUTPUT_DIR:-data/stage5}"
-USE_TRACKING="${FVC_USE_TRACKING:-true}"
-DELETE_EXISTING="${FVC_DELETE_EXISTING:-0}"
-
-log "Model type: $MODEL_TYPE (feature-based)"
-log "Frames per video: $NUM_FRAMES (uniformly sampled from each scaled video)"
-log "K-fold splits: $N_SPLITS"
-log "Output directory: $OUTPUT_DIR"
-log "Experiment tracking: $USE_TRACKING"
-log "Delete existing: $DELETE_EXISTING"
-
 STAGE5_START=$(date +%s)
-LOG_FILE="$ORIG_DIR/logs/stage5/stage5c_${SLURM_JOB_ID:-$$}.log"
+LOG_FILE="$ORIG_DIR/logs/stage5/stage5beta_${SLURM_JOB_ID:-$$}.log"
 mkdir -p "$(dirname "$LOG_FILE")"
+touch "$LOG_FILE"
 
-cd "$ORIG_DIR" || FEATURES_STAGE2="$ORIG_DIR/$FEATURES_STAGE2_DIR/features_metadata.arrow"  # Dummy path
+cd "$ORIG_DIR" || exit 1
 PYTHON_CMD=$(which python || echo "python")
 
 # ============================================================================
-# Import Validation: Verify all imports work before expensive training
+# Stage 5BETA Execution
 # ============================================================================
 
 log "=========================================="
-log "Validating Stage 5 Imports"
+log "Starting Stage 5BETA: Gradient Boosting Models Training"
 log "=========================================="
 
-VALIDATION_SCRIPT="$ORIG_DIR/src/scripts/validate_stage5_imports.py"
-if [ ! -f "$VALIDATION_SCRIPT" ]; then
-    log "⚠ WARNING: Import validation script not found: $VALIDATION_SCRIPT"
-    log "  Skipping import validation (not recommended)"
-else
-    log "Running import validation (testing with dummy tensors)..."
-    VALIDATION_OUTPUT=$("$PYTHON_CMD" "$VALIDATION_SCRIPT" 2>&1 | tee -a "$LOG_FILE")
-    VALIDATION_EXIT_CODE=${PIPESTATUS[0]}
-    
-    # Check if validation actually passed (all tests passed)
-    if echo "$VALIDATION_OUTPUT" | grep -q "✅ Validation PASSED"; then
-        log "✓ Import validation passed (all tests successful)"
-        # Exit code 134 (segfault) is OK if validation passed - it's just cleanup
-        if [ "$VALIDATION_EXIT_CODE" = "134" ]; then
-            log "  Note: Exit code 134 (segfault during cleanup) - validation still passed"
-        fi
-    else
-        log "✗ ERROR: Import validation failed (exit code: $VALIDATION_EXIT_CODE)"
-        log "  See validation output above for details"
-        log "  Training will not proceed until imports are validated"
-        log "  This catches import errors before expensive training jobs"
-        exit $VALIDATION_EXIT_CODE
-    fi
-fi
+N_SPLITS="${FVC_N_SPLITS:-5}"
+OUTPUT_DIR="${FVC_STAGE5_OUTPUT_DIR:-data/stage5}"
+DELETE_EXISTING="${FVC_DELETE_EXISTING:-0}"
+
+log "Model types: XGBoost, LightGBM, CatBoost"
+log "K-fold splits: $N_SPLITS"
+log "Output directory: $OUTPUT_DIR"
+log "Delete existing: $DELETE_EXISTING"
 
 # Validate Python script exists
-PYTHON_SCRIPT="$ORIG_DIR/src/scripts/run_stage5_training.py"
+PYTHON_SCRIPT="$ORIG_DIR/src/scripts/train_gradient_boosting.py"
 if [ ! -f "$PYTHON_SCRIPT" ]; then
     log "✗ ERROR: Python script not found: $PYTHON_SCRIPT"
-    FEATURES_STAGE2="$ORIG_DIR/$FEATURES_STAGE2_DIR/features_metadata.arrow"  # Dummy path
+    exit 1
 fi
 
 # Build command arguments
@@ -287,46 +250,81 @@ if [ "$DELETE_EXISTING" = "1" ] || [ "$DELETE_EXISTING" = "true" ] || [ "$DELETE
     DELETE_FLAG="--delete-existing"
 fi
 
-TRACKING_FLAG=""
-if [ "$USE_TRACKING" = "false" ]; then
-    TRACKING_FLAG="--no-tracking"
+log "Running gradient boosting training script..."
+log "Log file: $LOG_FILE"
+
+FEATURES_STAGE4_ARG=""
+if [ -n "$FEATURES_STAGE4" ]; then
+    FEATURES_STAGE4_ARG="--features-stage4 $FEATURES_STAGE4"
 fi
 
-log "Running Stage 5 training script for $MODEL_TYPE..."
-log "Log file: $LOG_FILE"
+# Determine which models to train based on availability
+MODELS_TO_TRAIN=()
+if python -c "import xgboost" 2>/dev/null; then
+    MODELS_TO_TRAIN+=("xgboost")
+fi
+if python -c "import lightgbm" 2>/dev/null; then
+    MODELS_TO_TRAIN+=("lightgbm")
+fi
+if python -c "import catboost" 2>/dev/null; then
+    MODELS_TO_TRAIN+=("catboost")
+fi
+
+if [ ${#MODELS_TO_TRAIN[@]} -eq 0 ]; then
+    log "✗ ERROR: No gradient boosting libraries available (xgboost, lightgbm, catboost)"
+    log "  Install with: pip install xgboost lightgbm catboost"
+    exit 1
+fi
+
+log "Training models: ${MODELS_TO_TRAIN[*]}"
 
 if "$PYTHON_CMD" "$PYTHON_SCRIPT" \
     --project-root "$ORIG_DIR" \
     --scaled-metadata "$SCALED_METADATA" \
     --features-stage2 "$FEATURES_STAGE2" \
-    --features-stage4 "$FEATURES_STAGE4" \
-    --model-types "$MODEL_TYPE" \
+    $FEATURES_STAGE4_ARG \
+    --output-dir "$OUTPUT_DIR/gradient_boosting" \
     --n-splits "$N_SPLITS" \
-    --num-frames "$NUM_FRAMES" \
-    --output-dir "$OUTPUT_DIR" \
-    $DELETE_FLAG \
-    $TRACKING_FLAG \
+    --models "${MODELS_TO_TRAIN[@]}" \
     2>&1 | tee "$LOG_FILE"; then
+    
+    # Verify dataframe row count check passed
+    if grep -q "Data validation passed.*rows (> 3000 required)" "$LOG_FILE" 2>/dev/null; then
+        log "✓ Data validation check passed (> 3000 rows)"
+    elif grep -q "Insufficient data for training" "$LOG_FILE" 2>/dev/null; then
+        log "✗ ERROR: Data validation failed - insufficient rows (need > 3000)"
+        log "Check log file for details: $LOG_FILE"
+        exit 1
+    else
+        log "⚠ WARNING: Could not verify data validation check in log file"
+    fi
     
     STAGE5_END=$(date +%s)
     STAGE5_DURATION=$((STAGE5_END - STAGE5_START))
-    log "✓ Stage 5 ($MODEL_TYPE) completed successfully in ${STAGE5_DURATION}s ($((${STAGE5_DURATION} / 60)) minutes)"
-    log "Results saved to: $ORIG_DIR/$OUTPUT_DIR/$MODEL_TYPE"
+    log "✓ Stage 5BETA (Gradient Boosting) completed successfully in ${STAGE5_DURATION}s ($((${STAGE5_DURATION} / 60)) minutes)"
+    log "Results saved to: $ORIG_DIR/$OUTPUT_DIR/gradient_boosting"
 else
     STAGE5_END=$(date +%s)
     STAGE5_DURATION=$((STAGE5_END - STAGE5_START))
-    log "✗ ERROR: Stage 5 ($MODEL_TYPE) failed after ${STAGE5_DURATION}s"
+    log "✗ ERROR: Stage 5BETA (Gradient Boosting) failed after ${STAGE5_DURATION}s"
+    
+    # Check if failure was due to insufficient data
+    if grep -q "Insufficient data for training" "$LOG_FILE" 2>/dev/null; then
+        log "✗ ERROR: Training failed due to insufficient data (need > 3000 rows)"
+        log "Please ensure Stage 3 completed successfully and generated enough scaled videos"
+    fi
+    
     log "Check log file: $LOG_FILE"
-    FEATURES_STAGE2="$ORIG_DIR/$FEATURES_STAGE2_DIR/features_metadata.arrow"  # Dummy path
+    exit 1
 fi
 
 log ""
 log "============================================================"
-log "STAGE 5 (naive_cnn) EXECUTION SUMMARY"
+log "STAGE 5BETA (Gradient Boosting) EXECUTION SUMMARY"
 log "============================================================"
 log "Execution time: ${STAGE5_DURATION}s ($((${STAGE5_DURATION} / 60)) minutes)"
-log "Model: $MODEL_TYPE"
+log "Models: XGBoost, LightGBM, CatBoost"
 log "K-fold splits: $N_SPLITS"
-log "Output directory: $ORIG_DIR/$OUTPUT_DIR/$MODEL_TYPE"
+log "Output directory: $ORIG_DIR/$OUTPUT_DIR/gradient_boosting"
 log "Log file: $LOG_FILE"
 log "============================================================"

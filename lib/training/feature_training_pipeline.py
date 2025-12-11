@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader
 from sklearn.model_selection import StratifiedKFold, ParameterGrid
 from sklearn.metrics import (
     f1_score, roc_auc_score, average_precision_score,
-    roc_curve, precision_recall_curve, confusion_matrix
+    roc_curve, precision_recall_curve, confusion_matrix, accuracy_score
 )
 import matplotlib.pyplot as plt
 
@@ -124,18 +124,21 @@ def load_features_for_training(
     features_stage4_path: Optional[str],
     video_paths: List[str],
     project_root: str
-) -> Tuple[np.ndarray, List[str], np.ndarray]:
+) -> Tuple[np.ndarray, List[str], Optional[np.ndarray]]:
     """
     Load and combine features for training.
     
     Collinearity removal is done ONCE here before any splits to avoid data leakage.
     
     Returns:
-        Tuple of (features, feature_names, valid_indices)
+        Tuple of (features, feature_names, valid_video_indices)
+        - features: Feature matrix (n_samples, n_features)
+        - feature_names: List of feature names
+        - valid_video_indices: Indices of videos that have valid features (None if all videos are valid)
     """
     try:
         # Load features WITHOUT collinearity removal first
-        features, feature_names, _ = load_and_combine_features(
+        features, feature_names, _, valid_video_indices = load_and_combine_features(
             features_stage2_path=features_stage2_path,
             features_stage4_path=features_stage4_path,
             video_paths=video_paths,
@@ -149,7 +152,7 @@ def load_features_for_training(
         logger.info(f"Removing collinear features BEFORE data splits (to avoid data leakage)...")
         logger.info(f"  Original feature count: {original_feature_count}")
         from lib.training.feature_preprocessing import remove_collinear_features
-        features, kept_indices, feature_names = remove_collinear_features(
+        features, kept_feature_indices, feature_names = remove_collinear_features(
             features,
             feature_names=feature_names,
             correlation_threshold=0.95,
@@ -158,7 +161,8 @@ def load_features_for_training(
         final_feature_count = len(feature_names)
         logger.info(f"  Final feature count after collinearity removal: {final_feature_count}/{original_feature_count} ({100*final_feature_count/original_feature_count:.1f}% retained)")
         
-        return features, feature_names, kept_indices
+        # Return video valid indices (not feature indices!)
+        return features, feature_names, valid_video_indices
     except Exception as e:
         logger.error(f"Failed to load features: {e}", exc_info=True)
         raise
@@ -282,6 +286,7 @@ def train_feature_model(
         best_val_f1 = -1
         patience_counter = 0
         patience = 10
+        best_model_state = None  # Initialize to None for safety
         
         for epoch in range(epochs):
             # Train
@@ -315,6 +320,36 @@ def train_feature_model(
             val_labels_array = np.array(val_labels_list)
             val_preds = (val_probs > 0.5).astype(int)
             val_f1 = f1_score(val_labels_array, val_preds)
+            val_acc = accuracy_score(val_labels_array, val_preds)
+            
+            # Calculate train metrics only when logging (every 10 epochs or first epoch)
+            should_log = (epoch + 1) % 10 == 0 or epoch == 0
+            if should_log:
+                model.train()
+                train_probs = []
+                train_labels_list = []
+                with torch.no_grad():
+                    for batch_features, batch_labels in train_loader:
+                        batch_features = batch_features.to(device)
+                        logits = model(batch_features)
+                        probs = torch.sigmoid(logits.squeeze()).cpu().numpy()
+                        train_probs.extend(probs)
+                        train_labels_list.extend(batch_labels.numpy())
+                
+                train_probs = np.array(train_probs)
+                train_labels_array = np.array(train_labels_list)
+                train_preds = (train_probs > 0.5).astype(int)
+                train_f1 = f1_score(train_labels_array, train_preds)
+                train_acc = accuracy_score(train_labels_array, train_preds)
+                
+                logger.info(
+                    f"Epoch {epoch + 1}/{epochs}: "
+                    f"train_loss={train_loss/len(train_loader):.4f}, "
+                    f"train_f1={train_f1:.4f}, "
+                    f"train_acc={train_acc:.4f}, "
+                    f"val_f1={val_f1:.4f}, "
+                    f"val_acc={val_acc:.4f}"
+                )
             
             if val_f1 > best_val_f1:
                 best_val_f1 = val_f1
@@ -328,6 +363,10 @@ def train_feature_model(
         # Load best model
         if best_model_state is not None:
             model.load_state_dict(best_model_state)
+        else:
+            logger.warning(f"No best model state found for params {params}, using final model state")
+            best_model_state = model.state_dict().copy()
+            best_val_f1 = val_f1  # Use final epoch's F1 if no improvement
         
         grid_results.append({
             "params": params,
@@ -337,13 +376,21 @@ def train_feature_model(
         if best_val_f1 > best_score:
             best_score = best_val_f1
             best_params = params.copy()
-            best_model = type(model)(**{k: v for k, v in model_params.items()})
+            # Use create_feature_model to ensure input_dim is passed correctly
+            best_model = create_feature_model(architecture, input_dim, **model_params)
             best_model.load_state_dict(best_model_state)
             best_preprocessor = preprocessor
         
         # Cleanup
         del model, train_dataset, val_dataset, train_loader, val_loader
         aggressive_gc(clear_cuda=use_gpu)
+    
+    # Safety check: ensure we have valid best_params
+    if best_params is None:
+        raise ValueError(
+            "No valid hyperparameters found during grid search. "
+            "This may indicate all models failed to train or all validation F1 scores were invalid."
+        )
     
     logger.info(f"Best hyperparameters: {best_params} (val_f1: {best_score:.4f})")
     
@@ -358,6 +405,15 @@ def train_feature_model(
                    if k in ["learning_rate", "weight_decay"]}
     
     final_model = create_feature_model(architecture, input_dim, **model_params)
+    # Move model to device and ensure all parameters/buffers are on device
+    final_model = final_model.to(device)
+    # Explicitly verify all parameters are on device
+    for param in final_model.parameters():
+        if param.device != device:
+            param.data = param.data.to(device)
+    for buffer in final_model.buffers():
+        if buffer.device != device:
+            buffer.data = buffer.data.to(device)
     final_preprocessor = FeaturePreprocessor()
     
     # 5-fold CV on train+val
@@ -380,8 +436,52 @@ def train_feature_model(
         use_gpu=use_gpu
     )
     
-    # Final evaluation on test set
+    # Train final_model on full training+validation set
+    logger.info("Training final model on full training+validation set...")
     final_preprocessor.fit(X_trainval)
+    X_trainval_processed = final_preprocessor.transform(X_trainval)
+    
+    # Create dataset and loader for full training
+    trainval_dataset = FeatureDataset(X_trainval_processed, y_trainval, feature_names)
+    trainval_loader = DataLoader(trainval_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    
+    # Setup optimizer and loss
+    optimizer = torch.optim.Adam(
+        final_model.parameters(),
+        lr=train_params.get("learning_rate", 1e-3),
+        weight_decay=train_params.get("weight_decay", 1e-5)
+    )
+    criterion = nn.BCEWithLogitsLoss()
+    
+    # Train final model
+    final_model.train()
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+        for batch_features, batch_labels in trainval_loader:
+            batch_features = batch_features.to(device)
+            batch_labels = batch_labels.to(device).float()
+            
+            optimizer.zero_grad()
+            logits = final_model(batch_features)
+            loss = criterion(logits.squeeze(), batch_labels)
+            loss.backward()
+            optimizer.step()
+            
+            epoch_loss += loss.item()
+        
+        if (epoch + 1) % 20 == 0:
+            logger.info(f"Final model training epoch {epoch + 1}/{epochs}: loss={epoch_loss/len(trainval_loader):.4f}")
+    
+    # Ensure model is on device after training
+    final_model = final_model.to(device)
+    for param in final_model.parameters():
+        if param.device != device:
+            param.data = param.data.to(device)
+    for buffer in final_model.buffers():
+        if buffer.device != device:
+            buffer.data = buffer.data.to(device)
+    
+    # Final evaluation on test set
     test_results = evaluate_model(
         final_model,
         X_test,

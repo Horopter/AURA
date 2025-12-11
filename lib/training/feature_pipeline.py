@@ -21,7 +21,7 @@ from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import (
     f1_score, roc_auc_score, average_precision_score,
-    roc_curve, precision_recall_curve, confusion_matrix
+    roc_curve, precision_recall_curve, confusion_matrix, accuracy_score
 )
 import matplotlib.pyplot as plt
 
@@ -330,6 +330,13 @@ def train_model_with_cv(
             avg_train_loss = train_loss / len(train_loader)
             avg_val_loss = val_loss / len(val_loader)
             
+            # Calculate validation metrics
+            val_probs = np.array(val_probs_list)
+            val_labels = np.array(val_labels_list)
+            val_preds = (val_probs > 0.5).astype(int)
+            val_f1 = f1_score(val_labels, val_preds)
+            val_acc = accuracy_score(val_labels, val_preds)
+            
             # Early stopping
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
@@ -342,7 +349,13 @@ def train_model_with_cv(
                     break
             
             if (epoch + 1) % 10 == 0:
-                logger.info(f"Epoch {epoch + 1}/{epochs}: train_loss={avg_train_loss:.4f}, val_loss={avg_val_loss:.4f}")
+                logger.info(
+                    f"Epoch {epoch + 1}/{epochs}: "
+                    f"train_loss={avg_train_loss:.4f}, "
+                    f"val_loss={avg_val_loss:.4f}, "
+                    f"val_f1={val_f1:.4f}, "
+                    f"val_acc={val_acc:.4f}"
+                )
         
         # Load best model
         if best_model_state is not None:
@@ -401,6 +414,16 @@ def evaluate_model(
     if device is None:
         device = torch.device("cuda" if (use_gpu and torch.cuda.is_available()) else "cpu")
     
+    # Ensure model is on the correct device - move all parameters and buffers
+    model = model.to(device)
+    # Explicitly ensure all parameters are on device (defensive check)
+    for param in model.parameters():
+        if param.device != device:
+            param.data = param.data.to(device)
+    for buffer in model.buffers():
+        if buffer.device != device:
+            buffer.data = buffer.data.to(device)
+    
     # Preprocess
     features_processed = preprocessor.transform(features)
     
@@ -415,7 +438,11 @@ def evaluate_model(
     
     with torch.no_grad():
         for batch_features, batch_labels in loader:
+            # Ensure batch_features is on the same device as model
             batch_features = batch_features.to(device)
+            # Double-check model is still on device before forward pass
+            if next(model.parameters()).device != device:
+                model = model.to(device)
             logits = model(batch_features)
             probs = torch.sigmoid(logits.squeeze()).cpu().numpy()
             all_probs.extend(probs)

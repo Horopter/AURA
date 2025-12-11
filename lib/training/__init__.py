@@ -21,22 +21,53 @@ from .trainer import (
     fit,
 )
 
-# Models
+# Models - feature-based models (always available)
 from ._linear import LogisticRegressionBaseline
 from ._svm import SVMBaseline
 from ._cnn import NaiveCNNBaseline
-from ._transformer_gru import ViTGRUModel
-from ._transformer import ViTTransformerModel
-from .slowfast import SlowFastModel
-from .x3d import X3DModel
-from .i3d import I3DModel
-from .r2plus1d import R2Plus1DModel
 from ._xgboost_pretrained import XGBoostPretrainedBaseline
-# Future models
-from .timesformer import TimeSformerModel
-from .vivit import ViViTModel
-from .two_stream import TwoStreamModel
-from .slowfast_advanced import SlowFastAttentionModel, MultiScaleSlowFastModel
+
+# Video-based models - lazy imports to avoid loading heavy dependencies when not needed
+# These are imported on-demand via model_factory.create_model()
+# Importing them here would cause issues when only using sklearn models
+def _lazy_import_video_models():
+    """Lazy import for video models - only called when needed."""
+    from ._transformer_gru import ViTGRUModel
+    from ._transformer import ViTTransformerModel
+    from .slowfast import SlowFastModel
+    from .x3d import X3DModel
+    from .i3d import I3DModel
+    from .r2plus1d import R2Plus1DModel
+    from .timesformer import TimeSformerModel
+    from .vivit import ViViTModel
+    from .two_stream import TwoStreamModel
+    from .slowfast_advanced import SlowFastAttentionModel, MultiScaleSlowFastModel
+    return {
+        "ViTGRUModel": ViTGRUModel,
+        "ViTTransformerModel": ViTTransformerModel,
+        "SlowFastModel": SlowFastModel,
+        "X3DModel": X3DModel,
+        "I3DModel": I3DModel,
+        "R2Plus1DModel": R2Plus1DModel,
+        "TimeSformerModel": TimeSformerModel,
+        "ViViTModel": ViViTModel,
+        "TwoStreamModel": TwoStreamModel,
+        "SlowFastAttentionModel": SlowFastAttentionModel,
+        "MultiScaleSlowFastModel": MultiScaleSlowFastModel,
+    }
+
+# For backward compatibility, provide lazy accessors
+def __getattr__(name):
+    """Lazy import for video models."""
+    video_models = {
+        "ViTGRUModel", "ViTTransformerModel", "SlowFastModel", "X3DModel",
+        "I3DModel", "R2Plus1DModel", "TimeSformerModel", "ViViTModel",
+        "TwoStreamModel", "SlowFastAttentionModel", "MultiScaleSlowFastModel"
+    }
+    if name in video_models:
+        models = _lazy_import_video_models()
+        return models[name]
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 # Model factory
 from .model_factory import (

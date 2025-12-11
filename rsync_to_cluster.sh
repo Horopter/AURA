@@ -11,38 +11,22 @@ echo "Source: $SOURCE_DIR"
 echo "Destination: $DEST_HOST:$DEST_PATH"
 echo ""
 
-rsync -avh --delete \
+rsync -avh --progress --stats --delete \
+  --chown=santoshd:si670f25_class_root \
   --exclude '.git/' \
-  --exclude '.venv/' \
-  --exclude 'venv/' \
+  --exclude '.venv/' --exclude 'venv/' --exclude 'env/' --exclude 'ENV/' \
   --exclude 'archive/' \
-  --exclude '__pycache__/' \
-  --exclude '**/__pycache__/' \
-  --exclude '.pytest_cache/' \
-  --exclude '.mypy_cache/' \
-  --exclude '.cache/' \
-  --exclude '.pip-cache/' \
-  --exclude 'models/' \
-  --exclude 'data/' \
-  --exclude 'logs/' \
-  --exclude '.DS_Store' \
-  --exclude '*.pyc' \
-  --exclude '*.pyo' \
-  --exclude '*.pyd' \
-  --exclude '.Python' \
-  --exclude '*.so' \
-  --exclude '*.egg-info/' \
-  --exclude '*.egg' \
-  --exclude '.ipynb_checkpoints/' \
-  --exclude '*.swp' \
-  --exclude '*.swo' \
-  --exclude '*~' \
-  --exclude '*.tmp' \
-  --exclude '*.temp' \
-  --exclude '*.bak' \
-  --exclude 'Thumbs.db' \
+  --exclude '__pycache__/' --exclude '**/__pycache__/' \
+  --exclude '.pytest_cache/' --exclude '.mypy_cache/' --exclude '.cache/' --exclude '.pip-cache/' \
+  --exclude 'models/' --exclude 'data/' --exclude 'logs/' \
+  --exclude '.DS_Store' --exclude 'Thumbs.db' \
+  --exclude '*.pyc' --exclude '*.pyo' --exclude '*.pyd' --exclude '.Python' \
+  --exclude '*.so' --exclude '*.egg-info/' --exclude '*.egg' \
+  --exclude '.ipynb_checkpoints/' --exclude '*.swp' --exclude '*.swo' --exclude '*~' \
+  --exclude '*.tmp' --exclude '*.temp' --exclude '*.bak' \
   "$SOURCE_DIR" \
   "$DEST_HOST:$DEST_PATH"
 
 echo ""
 echo "Sync complete!"
+

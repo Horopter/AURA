@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import random
 import logging
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
 import torch
 from torchvision import transforms
@@ -34,11 +34,21 @@ class RandomRotation:
     def __call__(self, img: Image.Image) -> Image.Image:
         if random.random() < self.p:
             self.angle = random.uniform(-self.degrees, self.degrees)
-            return img.rotate(
-                self.angle, 
-                resample=Image.Resampling.BILINEAR, 
-                fill=0
-            )
+            # Use fillcolor for compatibility with older PIL versions
+            # For RGB images, use (0, 0, 0) for black, for grayscale use 0
+            if img.mode == 'RGB':
+                fillcolor = (0, 0, 0)
+            else:
+                fillcolor = 0
+            try:
+                return img.rotate(
+                    self.angle, 
+                    resample=Image.Resampling.BILINEAR, 
+                    fillcolor=fillcolor
+                )
+            except TypeError:
+                # Fallback for very old PIL versions that don't support fillcolor
+                return img.rotate(self.angle, resample=Image.Resampling.BILINEAR)
         return img
 
 
@@ -275,44 +285,76 @@ def apply_simple_augmentation(
 
 
 def build_comprehensive_frame_transforms(
+    train: bool = True,
+    fixed_size: Optional[int] = None,
+    max_size: Optional[int] = None,
     augmentation_config: Optional[Dict[str, Any]] = None
 ) -> Tuple[transforms.Compose, transforms.Compose]:
     """
     Build comprehensive frame transforms for video augmentation.
     
     Args:
-        augmentation_config: Optional configuration dict
+        train: If True, apply data augmentations
+        fixed_size: Fixed size for both dimensions (e.g., 256). Uses letterboxing to maintain aspect ratio.
+        max_size: Maximum size for longer edge when resizing (maintains aspect ratio, but variable output size).
+                  Only used if fixed_size is None.
+        augmentation_config: Optional configuration dict for augmentation types
     
     Returns:
         Tuple of (spatial_transform, post_tensor_transform)
     """
-    spatial_transforms = []
+    transform_list = [transforms.functional.to_pil_image]
     
-    if augmentation_config is None:
-        augmentation_config = {}
+    # Resize strategy: prefer fixed_size (letterboxing) over max_size (variable)
+    if fixed_size is not None:
+        # Fixed size with letterboxing: resize to fit within fixed_size x fixed_size while maintaining aspect ratio
+        def letterbox_resize(img):
+            """Resize image to fit within fixed_size x fixed_size, adding black bars if needed."""
+            w, h = img.size
+            scale = min(fixed_size / w, fixed_size / h)
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            img_resized = img.resize((new_w, new_h), resample=Image.Resampling.LANCZOS)
+            
+            # Create a black canvas of fixed_size x fixed_size
+            canvas = Image.new('RGB', (fixed_size, fixed_size), (0, 0, 0))
+            # Center the resized image on the canvas
+            paste_x = (fixed_size - new_w) // 2
+            paste_y = (fixed_size - new_h) // 2
+            canvas.paste(img_resized, (paste_x, paste_y))
+            return canvas
+        
+        transform_list.append(letterbox_resize)
+    elif max_size is not None:
+        # Variable size: resize longer edge to max_size (maintains aspect ratio)
+        transform_list.append(transforms.Resize(max_size, antialias=True))
     
-    # Add spatial augmentations based on config
-    if augmentation_config.get('rotation', True):
-        spatial_transforms.append(RandomRotation(degrees=15.0, p=0.5))
+    # Add spatial augmentations based on config (only during training)
+    if train:
+        if augmentation_config is None:
+            augmentation_config = {}
+        
+        # Add spatial augmentations based on config
+        if augmentation_config.get('rotation', True):
+            transform_list.append(RandomRotation(degrees=15.0, p=0.5))
+        
+        if augmentation_config.get('affine', True):
+            transform_list.append(RandomAffine(translate=(0.1, 0.1), scale=(0.9, 1.1), p=0.5))
+        
+        if augmentation_config.get('gaussian_noise', False):
+            transform_list.append(RandomGaussianNoise(std=10.0, p=0.3))
+        
+        if augmentation_config.get('gaussian_blur', False):
+            transform_list.append(RandomGaussianBlur(radius_range=(0.5, 2.0), p=0.3))
+        
+        if augmentation_config.get('cutout', False):
+            transform_list.append(RandomCutout(num_holes=1, length=16, p=0.3))
     
-    if augmentation_config.get('affine', True):
-        spatial_transforms.append(RandomAffine(translate=(0.1, 0.1), scale=(0.9, 1.1), p=0.5))
+    # Convert to tensor
+    transform_list.append(transforms.ToTensor())
     
-    if augmentation_config.get('gaussian_noise', False):
-        spatial_transforms.append(RandomGaussianNoise(std=10.0, p=0.3))
-    
-    if augmentation_config.get('gaussian_blur', False):
-        spatial_transforms.append(RandomGaussianBlur(radius_range=(0.5, 2.0), p=0.3))
-    
-    if augmentation_config.get('cutout', False):
-        spatial_transforms.append(RandomCutout(num_holes=1, length=16, p=0.3))
-    
-    # Convert to PIL and back
-    spatial_transform = transforms.Compose([
-        transforms.ToPILImage(),
-        *spatial_transforms,
-        transforms.ToTensor(),
-    ])
+    # Build spatial transform
+    spatial_transform = transforms.Compose(transform_list)
     
     # Post-tensor transforms (normalization)
     post_tensor_transform = transforms.Compose([

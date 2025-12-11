@@ -227,6 +227,52 @@ def _remove_vif_collinear(
         return features, kept_indices, feature_names
 
 
+def _normalize_video_path(path: str) -> str:
+    """Normalize video path for matching by extracting video ID."""
+    path_str = str(path)
+    # Extract filename without extension
+    filename = Path(path_str).stem
+    # Remove common prefixes/suffixes
+    # Handle scaled videos: FX5aeuJFQ64_aug1_scaled_aug1 -> FX5aeuJFQ64_aug1
+    if '_scaled' in filename:
+        filename = filename.split('_scaled')[0]
+    # Handle augmentation: FX5aeuJFQ64_aug1 -> FX5aeuJFQ64
+    if '_aug' in filename:
+        parts = filename.split('_aug')
+        if len(parts) > 1:
+            try:
+                int(parts[1])  # Check if it's a number
+                filename = parts[0] + '_aug' + parts[1]  # Keep aug index
+            except ValueError:
+                filename = parts[0]
+    return filename.lower()
+
+
+def _match_video_path(target_path: str, candidate_paths: List[str]) -> Optional[str]:
+    """Match a target video path to a candidate path using normalized matching."""
+    target_normalized = _normalize_video_path(target_path)
+    
+    # Try exact normalized match first
+    for candidate in candidate_paths:
+        if _normalize_video_path(candidate) == target_normalized:
+            return candidate
+    
+    # Try substring matching on normalized paths
+    for candidate in candidate_paths:
+        candidate_normalized = _normalize_video_path(candidate)
+        if target_normalized in candidate_normalized or candidate_normalized in target_normalized:
+            return candidate
+    
+    # Try matching by video ID (filename stem)
+    target_id = Path(target_path).stem
+    for candidate in candidate_paths:
+        candidate_id = Path(candidate).stem
+        if target_id in candidate_id or candidate_id in target_id:
+            return candidate
+    
+    return None
+
+
 def load_and_combine_features(
     features_stage2_path: Optional[str],
     features_stage4_path: Optional[str],
@@ -236,7 +282,7 @@ def load_and_combine_features(
     correlation_threshold: float = 0.95,
     vif_threshold: float = 10.0,
     collinearity_method: str = "correlation"
-) -> Tuple[np.ndarray, List[str], Optional[List[int]]]:
+) -> Tuple[np.ndarray, List[str], Optional[List[int]], Optional[np.ndarray]]:
     """
     Load and combine features from Stage 2 and Stage 4 metadata files.
     Optionally removes collinear features after combining.
@@ -252,15 +298,20 @@ def load_and_combine_features(
         collinearity_method: Method for collinearity removal ("correlation", "vif", or "both")
     
     Returns:
-        Tuple of (combined_features, feature_names, kept_indices)
+        Tuple of (combined_features, feature_names, kept_feature_indices, valid_video_indices)
         - combined_features: Feature matrix (n_samples, n_features)
         - feature_names: List of feature names
-        - kept_indices: Indices of kept features (None if remove_collinearity=False)
+        - kept_feature_indices: Indices of kept features (None if remove_collinearity=False)
+        - valid_video_indices: Indices of videos that have valid (non-zero) features (None if all valid)
     """
     all_features = []
     all_feature_names = []
+    # Track which videos have features from each stage separately
+    has_stage2 = np.zeros(len(video_paths), dtype=bool)
+    has_stage4 = np.zeros(len(video_paths), dtype=bool)
     
     # Load Stage 2 features
+    stage2_loaded = False
     if features_stage2_path and Path(features_stage2_path).exists():
         logger.info("Loading Stage 2 features...")
         try:
@@ -277,32 +328,45 @@ def load_and_combine_features(
             feature_cols = [col for col in df2.columns if col not in metadata_cols]
             
             if feature_cols:
-                # Match features to video paths
-                features_dict = {row['video_path']: [row[col] for col in feature_cols] 
-                                for row in df2.iter_rows(named=True)}
+                # Build features dictionary with all candidate paths
+                features_dict = {}
+                candidate_paths = []
+                for row in df2.iter_rows(named=True):
+                    video_path_key = row['video_path']
+                    features_dict[video_path_key] = [row[col] for col in feature_cols]
+                    candidate_paths.append(video_path_key)
                 
                 stage2_features = []
-                for vpath in video_paths:
-                    # Try to match video path
-                    matched = None
-                    for key, vals in features_dict.items():
-                        if key in vpath or vpath in key:
-                            matched = vals
-                            break
+                stage2_valid_count = 0
+                unmatched_samples = []  # Track some unmatched samples for debugging
+                for idx, vpath in enumerate(video_paths):
+                    # Try to match video path using improved matching
+                    matched_key = _match_video_path(vpath, candidate_paths)
                     
-                    if matched is None:
-                        logger.warning(f"No Stage 2 features found for {vpath}")
+                    if matched_key and matched_key in features_dict:
+                        matched = features_dict[matched_key]
+                        stage2_features.append(matched)
+                        stage2_valid_count += 1
+                        has_stage2[idx] = True  # Mark as having Stage 2 features
+                    else:
+                        if len(unmatched_samples) < 5:  # Log first 5 unmatched
+                            unmatched_samples.append(vpath)
                         matched = [0.0] * len(feature_cols)
-                    
-                    stage2_features.append(matched)
+                        stage2_features.append(matched)
+                
+                if unmatched_samples:
+                    logger.debug(f"Sample unmatched Stage 2 videos (showing first {len(unmatched_samples)}): {unmatched_samples[:3]}")
+                    logger.debug(f"Sample Stage 2 feature paths (showing first 3): {candidate_paths[:3] if candidate_paths else 'None'}")
                 
                 all_features.append(np.array(stage2_features))
                 all_feature_names.extend([f"stage2_{col}" for col in feature_cols])
-                logger.info(f"Loaded {len(feature_cols)} Stage 2 features")
+                logger.info(f"Loaded {len(feature_cols)} Stage 2 features ({stage2_valid_count}/{len(video_paths)} videos matched)")
+                stage2_loaded = True
         except Exception as e:
-            logger.error(f"Error loading Stage 2 features: {e}")
+            logger.error(f"Error loading Stage 2 features: {e}", exc_info=True)
     
     # Load Stage 4 features
+    stage4_loaded = False
     if features_stage4_path and Path(features_stage4_path).exists():
         logger.info("Loading Stage 4 features...")
         try:
@@ -319,42 +383,90 @@ def load_and_combine_features(
             feature_cols = [col for col in df4.columns if col not in metadata_cols]
             
             if feature_cols:
-                features_dict = {row['video_path']: [row[col] for col in feature_cols] 
-                                for row in df4.iter_rows(named=True)}
+                features_dict = {}
+                candidate_paths = []
+                for row in df4.iter_rows(named=True):
+                    video_path_key = row['video_path']
+                    features_dict[video_path_key] = [row[col] for col in feature_cols]
+                    candidate_paths.append(video_path_key)
                 
                 stage4_features = []
-                for vpath in video_paths:
-                    matched = None
-                    for key, vals in features_dict.items():
-                        if key in vpath or vpath in key:
-                            matched = vals
-                            break
+                stage4_valid_count = 0
+                unmatched_samples = []  # Track some unmatched samples for debugging
+                for idx, vpath in enumerate(video_paths):
+                    matched_key = _match_video_path(vpath, candidate_paths)
                     
-                    if matched is None:
-                        logger.warning(f"No Stage 4 features found for {vpath}")
+                    if matched_key and matched_key in features_dict:
+                        matched = features_dict[matched_key]
+                        stage4_features.append(matched)
+                        stage4_valid_count += 1
+                        has_stage4[idx] = True  # Mark as having Stage 4 features
+                    else:
+                        if len(unmatched_samples) < 5:  # Log first 5 unmatched
+                            unmatched_samples.append(vpath)
                         matched = [0.0] * len(feature_cols)
-                    
-                    stage4_features.append(matched)
+                        stage4_features.append(matched)
+                
+                if unmatched_samples:
+                    logger.debug(f"Sample unmatched Stage 4 videos (showing first {len(unmatched_samples)}): {unmatched_samples[:3]}")
+                    logger.debug(f"Sample Stage 4 feature paths (showing first 3): {candidate_paths[:3] if candidate_paths else 'None'}")
                 
                 all_features.append(np.array(stage4_features))
                 all_feature_names.extend([f"stage4_{col}" for col in feature_cols])
-                logger.info(f"Loaded {len(feature_cols)} Stage 4 features")
+                logger.info(f"Loaded {len(feature_cols)} Stage 4 features ({stage4_valid_count}/{len(video_paths)} videos matched)")
+                stage4_loaded = True
         except Exception as e:
-            logger.error(f"Error loading Stage 4 features: {e}")
+            logger.error(f"Error loading Stage 4 features: {e}", exc_info=True)
     
     if not all_features:
         logger.warning("No features loaded!")
-        return np.array([]).reshape(len(video_paths), 0), [], None
+        return np.array([]).reshape(len(video_paths), 0), [], None, None
     
     # Combine features
     combined_features = np.hstack(all_features)
     logger.info(f"Combined {len(all_feature_names)} features from {len(all_features)} stages")
     
+    # Determine valid video indices based on which stages are loaded
+    # If both Stage 2 and Stage 4 are loaded, keep only videos that have BOTH (intersection)
+    # If only one stage is loaded, keep videos with that stage's features
+    if stage2_loaded and stage4_loaded:
+        # Require BOTH Stage 2 AND Stage 4 features (intersection)
+        # This ensures we use the smaller set (x-n rows) as the user requested
+        valid_video_indices = np.where(has_stage2 & has_stage4)[0]
+        logger.info(f"Stage 2: {np.sum(has_stage2)} videos, Stage 4: {np.sum(has_stage4)} videos")
+        logger.info(f"Intersection (videos with BOTH Stage 2 AND Stage 4): {len(valid_video_indices)} videos")
+    elif stage2_loaded:
+        # Only Stage 2 loaded
+        valid_video_indices = np.where(has_stage2)[0]
+        logger.info(f"Stage 2 only: {len(valid_video_indices)} videos with features")
+    elif stage4_loaded:
+        # Only Stage 4 loaded
+        valid_video_indices = np.where(has_stage4)[0]
+        logger.info(f"Stage 4 only: {len(valid_video_indices)} videos with features")
+    else:
+        # No features loaded
+        logger.warning("No features loaded from either stage!")
+        return np.array([]).reshape(len(video_paths), 0), [], None, None
+    
+    # Check if we have at least 3000 videos
+    if len(valid_video_indices) < 3000:
+        logger.warning(
+            f"Only {len(valid_video_indices)} videos have valid features (need >= 3000). "
+            f"This may cause training to fail."
+        )
+    else:
+        logger.info(f"✓ Found {len(valid_video_indices)} videos with valid features (>= 3000 required)")
+    
+    # Return None if all videos are valid (for backward compatibility)
+    if len(valid_video_indices) == len(video_paths):
+        valid_video_indices = None
+        logger.info(f"All {len(video_paths)} videos have valid features")
+    
     # Remove collinear features if requested
-    kept_indices = None
+    kept_feature_indices = None
     if remove_collinearity and combined_features.shape[1] > 0:
         logger.info("Removing collinear features from combined features...")
-        combined_features, kept_indices, all_feature_names = remove_collinear_features(
+        combined_features, kept_feature_indices, all_feature_names = remove_collinear_features(
             combined_features,
             feature_names=all_feature_names,
             correlation_threshold=correlation_threshold,
@@ -363,11 +475,13 @@ def load_and_combine_features(
         )
         logger.info(f"Final feature count after collinearity removal: {len(all_feature_names)}")
     
-    return combined_features, all_feature_names, kept_indices
+    return combined_features, all_feature_names, kept_feature_indices, valid_video_indices
 
 
 __all__ = [
     "remove_collinear_features",
     "load_and_combine_features",
+    "_normalize_video_path",
+    "_match_video_path",
 ]
 

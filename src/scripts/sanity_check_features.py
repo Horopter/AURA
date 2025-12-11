@@ -372,7 +372,7 @@ def main():
                 try:
                     # Limit to 3 videos to reduce memory pressure and potential crashes
                     test_video_paths = test_video_paths[:3]
-                    features, feature_names, kept_indices = load_and_combine_features(
+                    features, feature_names, kept_indices, valid_video_indices = load_and_combine_features(
                         features_stage2_path=str(stage2_metadata),
                         features_stage4_path=str(stage4_metadata) if (stage4_metadata and stage4_metadata.exists()) else None,
                         video_paths=test_video_paths,
@@ -383,9 +383,11 @@ def main():
                     logger.info(f"  Feature matrix shape: {features.shape}")
                     logger.info(f"  Feature names count: {len(feature_names)}")
                     logger.info(f"  Sample feature names: {feature_names[:5]}")
+                    if valid_video_indices is not None:
+                        logger.info(f"  Valid video indices: {len(valid_video_indices)}/{len(test_video_paths)} videos")
                     feature_test_success = True
                     # Explicitly delete large objects to help with cleanup
-                    del features, feature_names, kept_indices
+                    del features, feature_names, kept_indices, valid_video_indices
                 except Exception as e:
                     logger.error(f"✗ Failed to load features: {e}", exc_info=True)
     except Exception as e:

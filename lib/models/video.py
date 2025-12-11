@@ -158,6 +158,8 @@ class VideoConfig:
     # Augmentation configuration (see lib.augmentation.transforms for details)
     augmentation_config: Optional[dict] = None  # Spatial augmentation parameters
     temporal_augmentation_config: Optional[dict] = None  # Temporal augmentation parameters
+    # If True, videos are already scaled/processed - skip resizing and augmentation, only apply normalization
+    use_scaled_videos: bool = False
 
 
 def uniform_sample_indices(total_frames: int, num_frames: int) -> List[int]:
@@ -348,24 +350,38 @@ class VideoDataset(Dataset):
                 self.config.img_size
             )
         
-        # Use comprehensive augmentations if available, otherwise fallback to basic
-        try:
-            from lib.augmentation.transforms import build_comprehensive_frame_transforms
-            self._frame_transform, self._post_tensor_transform = build_comprehensive_frame_transforms(
-                train=train,
-                fixed_size=fixed_size,
-                max_size=max_size,
-                augmentation_config=getattr(self.config, 'augmentation_config', None),
-            )
-        except ImportError:
-            # Fallback to basic augmentations
-            logger.warning("Comprehensive augmentations not available, using basic augmentations")
-            self._frame_transform = build_frame_transforms(
-                train=train, 
-                fixed_size=fixed_size,
-                max_size=max_size
-            )
-            self._post_tensor_transform = None
+        # Check if using scaled videos (already processed) - skip transforms except normalization
+        use_scaled_videos = getattr(self.config, 'use_scaled_videos', False)
+        
+        if use_scaled_videos:
+            # Scaled videos are already processed - only apply normalization
+            logger.info("Using scaled videos: skipping resizing and augmentation, applying normalization only")
+            self._frame_transform = transforms.Compose([
+                transforms.functional.to_pil_image,
+                transforms.ToTensor(),
+            ])
+            self._post_tensor_transform = transforms.Compose([
+                transforms.Normalize(mean=IMG_MEAN, std=IMG_STD)
+            ])
+        else:
+            # Use comprehensive augmentations if available, otherwise fallback to basic
+            try:
+                from lib.augmentation.transforms import build_comprehensive_frame_transforms
+                self._frame_transform, self._post_tensor_transform = build_comprehensive_frame_transforms(
+                    train=train,
+                    fixed_size=fixed_size,
+                    max_size=max_size,
+                    augmentation_config=getattr(self.config, 'augmentation_config', None),
+                )
+            except ImportError:
+                # Fallback to basic augmentations
+                logger.warning("Comprehensive augmentations not available, using basic augmentations")
+                self._frame_transform = build_frame_transforms(
+                    train=train, 
+                    fixed_size=fixed_size,
+                    max_size=max_size
+                )
+                self._post_tensor_transform = None
 
     def __len__(self) -> int:
         if self._use_polars:

@@ -95,7 +95,7 @@ def stage5_train_all_models(
         )
     
     try:
-        features, feature_names, valid_indices = load_features_for_training(
+        features, feature_names, valid_video_indices = load_features_for_training(
             features_stage2_path,
             features_stage4_path,
             video_paths,
@@ -111,26 +111,29 @@ def stage5_train_all_models(
         )
         raise
     
-    # Filter to valid indices (videos that have features)
-    if valid_indices is not None:
+    # Filter to valid video indices (videos that have valid features)
+    if valid_video_indices is not None and len(valid_video_indices) > 0:
         original_count = len(features)
-        features = features[valid_indices]
-        labels_array = labels_array[valid_indices]
-        video_paths = [video_paths[i] for i in valid_indices]
+        features = features[valid_video_indices]
+        labels_array = labels_array[valid_video_indices]
+        video_paths = [video_paths[i] for i in valid_video_indices]
         logger.info(f"After filtering to videos with valid features: {len(features)}/{original_count} videos")
+    else:
+        logger.info(f"All {len(features)} videos have valid features")
     
     # CRITICAL: Ensure we have at least 3000 videos with valid features
-    if len(features) <= 3000:
+    if len(features) < 3000:
         error_msg = (
             f"Insufficient valid videos for training. "
-            f"Found {len(features)} videos with valid features, but need more than 3000. "
+            f"Found {len(features)} videos with valid features, but need at least 3000. "
             f"Original dataset had {scaled_df.height} videos. "
-            f"Some videos may be missing features or corrupted."
+            f"Some videos may be missing features from Stage 2 or Stage 4, or the intersection "
+            f"of videos with both Stage 2 AND Stage 4 features is too small."
         )
         logger.error(error_msg)
         raise ValueError(error_msg)
     
-    logger.info(f"✓ Sufficient videos with valid features: {len(features)} > 3000")
+    logger.info(f"✓ Sufficient videos with valid features: {len(features)} >= 3000")
     
     # Separate models by type
     feature_models = [m for m in model_types if is_feature_based(m)]
