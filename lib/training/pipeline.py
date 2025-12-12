@@ -466,6 +466,17 @@ def stage5_train_models(
     Returns:
         Dictionary of training results
     """
+    # Immediate logging to show function has started
+    logger.info("=" * 80)
+    logger.info("Stage 5: Model Training Pipeline Started")
+    logger.info("=" * 80)
+    logger.info("Model types: %s", model_types)
+    logger.info("K-fold splits: %d", n_splits)
+    logger.info("Frames per video: %d", num_frames)
+    logger.info("Output directory: %s", output_dir)
+    logger.info("Initializing pipeline...")
+    sys.stdout.flush()  # Ensure immediate output
+    
     # Input validation
     if not project_root or not isinstance(project_root, str):
         raise ValueError(f"project_root must be a non-empty string, got: {type(project_root)}")
@@ -766,9 +777,10 @@ def stage5_train_models(
                         # Note: sys and importlib.util are already imported at module level
                         # project_root_path is already resolved at function start
                         
-                        # Import VideoDataset - fail fast if not available (required for video-based models)
+                        # Import VideoDataset and collate function - fail fast if not available (required for video-based models)
                         try:
                             from lib.models import VideoDataset
+                            from lib.models.video import variable_ar_collate
                         except ImportError as e:
                             raise ImportError(
                             f"Cannot import VideoDataset from lib.models. "
@@ -790,23 +802,36 @@ def stage5_train_models(
                         use_cuda = torch.cuda.is_available()
                         num_workers = current_config.get("num_workers", model_config.get("num_workers", 0))
                     
+                        # Get batch size and gradient accumulation for logging
+                        batch_size = current_config.get("batch_size", model_config.get("batch_size", 8))
+                        gradient_accumulation_steps = current_config.get("gradient_accumulation_steps", model_config.get("gradient_accumulation_steps", 1))
+                        effective_batch_size = batch_size * gradient_accumulation_steps
+                        
+                        logger.info(
+                            f"Training configuration - Batch size: {batch_size}, "
+                            f"Gradient accumulation steps: {gradient_accumulation_steps}, "
+                            f"Effective batch size: {effective_batch_size}"
+                        )
+                        
                         train_loader = DataLoader(
                         train_dataset,
-                        batch_size=current_config.get("batch_size", model_config.get("batch_size", 8)),
+                        batch_size=batch_size,
                         shuffle=True,
                         num_workers=num_workers,
                         pin_memory=use_cuda,  # Faster GPU transfer
                         persistent_workers=num_workers > 0,  # Keep workers alive between epochs
                         prefetch_factor=2 if num_workers > 0 else None,  # Prefetch batches
+                        collate_fn=variable_ar_collate,  # Convert (N, T, C, H, W) to (N, C, T, H, W) for 3D CNNs
                         )
                         val_loader = DataLoader(
                         val_dataset,
-                        batch_size=current_config.get("batch_size", model_config.get("batch_size", 8)),
+                        batch_size=batch_size,
                         shuffle=False,
                         num_workers=num_workers,
                         pin_memory=use_cuda,
                         persistent_workers=num_workers > 0,
                         prefetch_factor=2 if num_workers > 0 else None,
+                        collate_fn=variable_ar_collate,  # Convert (N, T, C, H, W) to (N, C, T, H, W) for 3D CNNs
                         )
                         # PyTorch model training
                         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -897,19 +922,82 @@ def stage5_train_models(
                         if len(val_dataset) == 0:
                             raise ValueError(f"Validation dataset is empty for fold {fold_idx + 1}")
                     
-                        # Validate model initialization
+                        # Validate model initialization with OOM-resistant forward pass test
                         try:
+                            # Clear CUDA cache before test to maximize available memory
+                            if device.type == "cuda":
+                                torch.cuda.empty_cache()
+                                torch.cuda.synchronize()
+                            
                             model.eval()
                             with torch.no_grad():
-                                # Test forward pass with a sample batch
-                                sample_batch = next(iter(train_loader))
+                                # Forward pass test uses batch_size=1 to minimize memory
+                                # NOTE: This is ONLY for testing model initialization.
+                                # Actual training uses batch_size={batch_size} with gradient_accumulation_steps={gradient_accumulation_steps}
+                                # (effective batch size = {effective_batch_size})
+                                # Create a minimal test loader with batch_size=1
+                                test_loader = DataLoader(
+                                    train_dataset,
+                                    batch_size=1,  # Single sample to minimize memory (ONLY for test, not training)
+                                    shuffle=False,
+                                    num_workers=0,  # No workers to avoid memory overhead
+                                    pin_memory=False,  # Disable pinning for test
+                                    collate_fn=variable_ar_collate,  # Use same collate function as training
+                                )
+                                
+                                # Get a single sample
+                                sample_batch = next(iter(test_loader))
                                 sample_clips, sample_labels = sample_batch
-                                sample_clips = sample_clips.to(device)
-                                sample_output = model(sample_clips)
-                                logger.info(f"Model forward pass test successful. Output shape: {sample_output.shape}")
-                                del sample_batch, sample_clips, sample_labels, sample_output
+                                
+                                # Move to device
+                                sample_clips = sample_clips.to(device, non_blocking=False)
+                                
+                                # Test forward pass
+                                try:
+                                    sample_output = model(sample_clips)
+                                    logger.info(f"Model forward pass test successful. Output shape: {sample_output.shape}")
+                                except RuntimeError as oom_error:
+                                    error_msg = str(oom_error)
+                                    if "out of memory" in error_msg.lower():
+                                        logger.warning(
+                                            f"OOM during forward pass test. "
+                                            f"Model: {model_type}, Batch size: 1. "
+                                            f"This may indicate the model is too large for available GPU memory."
+                                        )
+                                        # Try to continue anyway - sometimes training with gradient accumulation works
+                                        logger.warning("Attempting to continue with training (may fail if model is too large)...")
+                                        # Don't raise - let training attempt proceed
+                                    else:
+                                        raise
+                                
+                                # Cleanup
+                                del sample_batch, sample_clips, sample_labels
+                                if 'sample_output' in locals():
+                                    del sample_output
+                                del test_loader
+                                
+                                # Aggressive cache clearing
                                 if device.type == "cuda":
                                     torch.cuda.empty_cache()
+                                    torch.cuda.synchronize()
+                                    
+                        except RuntimeError as e:
+                            error_msg = str(e)
+                            if "out of memory" in error_msg.lower():
+                                logger.error(
+                                    f"CUDA OOM during model forward pass test: {e}. "
+                                    f"Model: {model_type}, Batch size: 1. "
+                                    f"GPU memory may be insufficient for this model."
+                                )
+                                # Clear cache and try to continue
+                                if device.type == "cuda":
+                                    torch.cuda.empty_cache()
+                                    torch.cuda.synchronize()
+                                # Don't raise - let training attempt proceed with warning
+                                logger.warning("Continuing with training despite OOM in forward pass test...")
+                            else:
+                                logger.error(f"Model forward pass test failed: {e}", exc_info=True)
+                                raise ValueError(f"Model initialization failed: {e}") from e
                         except Exception as e:
                             logger.error(f"Model forward pass test failed: {e}", exc_info=True)
                             raise ValueError(f"Model initialization failed: {e}") from e
@@ -1212,10 +1300,43 @@ def stage5_train_models(
                             model = create_model(model_type, baseline_config)
                             
                             # Train baseline (handles feature extraction internally)
-                            model.fit(train_df, project_root=project_root_str_orig)
+                            # Wrap in try-except to catch potential crashes
+                            logger.info(f"Starting model.fit() for {model_type} fold {fold_idx + 1}...")
+                            logger.info(f"Training data: {train_df.height} rows")
+                            sys.stdout.flush()
+                            
+                            try:
+                                model.fit(train_df, project_root=project_root_str_orig)
+                                logger.info(f"Model.fit() completed successfully for fold {fold_idx + 1}")
+                            except MemoryError as e:
+                                logger.error(f"Memory error during model.fit() for fold {fold_idx + 1}: {e}")
+                                raise
+                            except Exception as e:
+                                error_msg = str(e)
+                                if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                                    logger.critical(f"CRITICAL: Possible crash during model.fit() for fold {fold_idx + 1}: {e}")
+                                    logger.critical("This may indicate a memory issue, corrupted data, or library incompatibility")
+                                    logger.critical("Check log file for more details")
+                                raise
                             
                             # Evaluate on validation set
-                            val_probs = model.predict(val_df, project_root=project_root_str_orig)
+                            logger.info(f"Starting model.predict() for {model_type} fold {fold_idx + 1}...")
+                            logger.info(f"Validation data: {val_df.height} rows")
+                            sys.stdout.flush()
+                            
+                            try:
+                                val_probs = model.predict(val_df, project_root=project_root_str_orig)
+                                logger.info(f"Model.predict() completed successfully for fold {fold_idx + 1}")
+                            except MemoryError as e:
+                                logger.error(f"Memory error during model.predict() for fold {fold_idx + 1}: {e}")
+                                raise
+                            except Exception as e:
+                                error_msg = str(e)
+                                if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                                    logger.critical(f"CRITICAL: Possible crash during model.predict() for fold {fold_idx + 1}: {e}")
+                                    logger.critical("This may indicate a memory issue, corrupted data, or library incompatibility")
+                                    logger.critical("Check log file for more details")
+                                raise
                             val_preds = np.argmax(val_probs, axis=1)
                             val_labels = val_df["label"].to_list()
                             label_map = {label: idx for idx, label in enumerate(sorted(set(val_labels)))}

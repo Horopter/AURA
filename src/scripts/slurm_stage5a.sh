@@ -227,6 +227,8 @@ touch "$LOG_FILE"
 
 cd "$ORIG_DIR" || exit 1
 PYTHON_CMD=$(which python || echo "python")
+# Use unbuffered Python for immediate output
+PYTHON_CMD="$PYTHON_CMD -u"
 
 # ============================================================================
 # Import Validation: Verify all imports work before expensive training

@@ -19,6 +19,7 @@ import logging
 import argparse
 import time
 from pathlib import Path
+import polars as pl
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -26,6 +27,8 @@ sys.path.insert(0, str(project_root))
 
 from lib.scaling import stage3_scale_videos
 from lib.utils.memory import log_memory_stats
+from lib.data import load_metadata, filter_existing_videos
+from lib.utils.paths import resolve_video_path, load_metadata_flexible
 
 # Setup extensive logging
 logging.basicConfig(
@@ -40,6 +43,152 @@ logging.getLogger("lib").setLevel(logging.DEBUG)
 logging.getLogger("lib.scaling").setLevel(logging.DEBUG)
 logging.getLogger("lib.data").setLevel(logging.DEBUG)
 logging.getLogger("lib.utils").setLevel(logging.DEBUG)
+
+
+def check_videos_needing_scaling(
+    project_root: Path,
+    augmented_metadata_path: Path,
+    output_dir: Path,
+    target_size: int,
+    start_idx: int = None,
+    end_idx: int = None
+) -> tuple[list[int], int, int]:
+    """
+    Pass 1: Check which videos need scaling.
+    
+    Returns:
+        (videos_needing_scaling, videos_complete, videos_incomplete)
+        - videos_needing_scaling: List of indices in the dataframe that need scaling
+        - videos_complete: Count of videos with scaled versions already
+        - videos_incomplete: Count of videos needing scaling
+    """
+    logger.info("PASS 1: Checking which videos need scaling...")
+    
+    # Load augmented metadata
+    try:
+        df = load_metadata_flexible(str(augmented_metadata_path))
+    except Exception as e:
+        logger.error(f"Failed to load augmented metadata: {e}")
+        raise
+    
+    if df is None or df.height == 0:
+        logger.warning("No videos found in augmented metadata")
+        return [], 0, 0
+    
+    df = filter_existing_videos(df, str(project_root))
+    
+    # Apply range filtering if specified
+    total_videos = df.height
+    if start_idx is not None or end_idx is not None:
+        start = start_idx if start_idx is not None else 0
+        end = end_idx if end_idx is not None else total_videos
+        if start < 0:
+            start = 0
+        if end > total_videos:
+            end = total_videos
+        if start >= end:
+            raise ValueError(f"Invalid range: start_idx={start}, end_idx={end}")
+        df = df.slice(start, end - start)
+    
+    # Check existing scaled metadata
+    metadata_path_arrow = output_dir / "scaled_metadata.arrow"
+    metadata_path_parquet = output_dir / "scaled_metadata.parquet"
+    metadata_path_csv = output_dir / "scaled_metadata.csv"
+    
+    metadata_path = None
+    if metadata_path_arrow.exists():
+        metadata_path = metadata_path_arrow
+    elif metadata_path_parquet.exists():
+        metadata_path = metadata_path_parquet
+    elif metadata_path_csv.exists():
+        metadata_path = metadata_path_csv
+    
+    # Load existing scaled video paths
+    existing_scaled_paths = set()
+    if metadata_path and metadata_path.exists():
+        try:
+            if metadata_path.suffix == '.arrow':
+                existing_metadata = pl.read_ipc(metadata_path)
+            elif metadata_path.suffix == '.parquet':
+                existing_metadata = pl.read_parquet(metadata_path)
+            else:
+                existing_metadata = pl.read_csv(str(metadata_path))
+            
+            # Extract video IDs from existing scaled videos
+            for row in existing_metadata.iter_rows(named=True):
+                scaled_path = row.get("video_path", "")
+                if scaled_path:
+                    # Extract video_id from scaled path (e.g., "video_id_scaled_original.mp4" or "video_id_scaled_aug0.mp4")
+                    scaled_filename = Path(scaled_path).stem
+                    # Remove "_scaled_original" or "_scaled_augX" suffix to get base video_id
+                    if "_scaled_original" in scaled_filename:
+                        video_id = scaled_filename.replace("_scaled_original", "")
+                    elif "_scaled_aug" in scaled_filename:
+                        video_id = scaled_filename.split("_scaled_aug")[0]
+                    else:
+                        video_id = scaled_filename
+                    existing_scaled_paths.add(video_id)
+        except Exception as e:
+            logger.warning(f"Could not load existing scaled metadata: {e}")
+    
+    # Pass 1: Identify videos that need scaling
+    videos_needing_scaling = []
+    videos_complete = 0
+    videos_incomplete = 0
+    
+    for idx in range(df.height):
+        row = df.row(idx, named=True)
+        video_rel = row["video_path"]
+        
+        try:
+            video_path = resolve_video_path(video_rel, project_root)
+            if not Path(video_path).exists():
+                videos_needing_scaling.append(idx)
+                videos_incomplete += 1
+                continue
+            
+            # Extract video_id (same logic as in stage3_scale_videos)
+            video_id = Path(video_path).stem
+            video_id = "".join(c if c.isalnum() or c in ('-', '_', '.') else '_' for c in video_id)
+            
+            # Check if scaled video exists (check both original and augmented versions)
+            aug_idx = row.get("augmentation_idx", -1)
+            is_original = row.get("is_original", False)
+            
+            if is_original or aug_idx == -1 or aug_idx is None:
+                output_filename = f"{video_id}_scaled_original.mp4"
+            else:
+                try:
+                    aug_idx_int = int(aug_idx) if aug_idx is not None else -1
+                    output_filename = f"{video_id}_scaled_aug{aug_idx_int}.mp4"
+                except (ValueError, TypeError):
+                    output_filename = f"{video_id}_scaled_original.mp4"
+            
+            output_path = output_dir / output_filename
+            
+            # Check if scaled video exists
+            if output_path.exists() or video_id in existing_scaled_paths:
+                videos_complete += 1
+            else:
+                videos_incomplete += 1
+                videos_needing_scaling.append(idx)
+            
+            # Log progress every 100 videos or at the end
+            if (idx + 1) % 100 == 0 or (idx + 1) == df.height:
+                logger.info(f"Checked {idx + 1}/{df.height} videos... ({videos_complete} complete, {videos_incomplete} need scaling)")
+                
+        except Exception as e:
+            logger.debug(f"Error checking video {video_rel}: {e}")
+            videos_needing_scaling.append(idx)
+            videos_incomplete += 1
+            # Log progress even on errors
+            if (idx + 1) % 100 == 0 or (idx + 1) == df.height:
+                logger.info(f"Checked {idx + 1}/{df.height} videos... ({videos_complete} complete, {videos_incomplete} need scaling)")
+    
+    # Final summary log
+    logger.info(f"PASS 1 complete: Checked all {df.height} videos ({videos_complete} complete, {videos_incomplete} need scaling)")
+    
+    return videos_needing_scaling, videos_complete, videos_incomplete
 
 
 def main():
@@ -124,8 +273,13 @@ Examples:
     parser.add_argument(
         "--resume",
         action="store_true",
-        default=True,
         help="Resume from existing scaled video files (skip already processed videos, default: True)"
+    )
+    parser.add_argument(
+        "--no-resume",
+        dest="resume",
+        action="store_false",
+        help="Disable resume mode (process all videos, even if already scaled)"
     )
     parser.add_argument(
         "--execution-order",
@@ -137,6 +291,13 @@ Examples:
     )
     
     args = parser.parse_args()
+    
+    # Set resume default to True if neither --resume nor --no-resume was specified
+    # argparse doesn't support default=True with store_true, so we handle it manually
+    # Check if either flag was explicitly provided
+    resume_provided = '--resume' in sys.argv or '--no-resume' in sys.argv
+    if not resume_provided:
+        args.resume = True
     
     # Input validation
     if not args.project_root or not isinstance(args.project_root, str):
@@ -253,17 +414,84 @@ Examples:
     log_memory_stats("Stage 3: before scaling", detailed=True)
     
     # Run Stage 3
-    logger.info("=" * 80)
-    logger.info("Starting Stage 3: Video Scaling")
-    logger.info("=" * 80)
-    logger.info("This may take a while depending on dataset size...")
-    logger.info("Progress will be logged in real-time")
-    logger.info("=" * 80)
-    
     stage_start = time.time()
     
     try:
-        result_df = stage3_scale_videos(
+        # Two-pass mode when --resume is enabled
+        if args.resume:
+            logger.info("=" * 80)
+            logger.info("RESUME MODE: Two-Pass Scaling")
+            logger.info("=" * 80)
+            
+            # Pass 1: Check which videos need scaling
+            pass1_start = time.time()
+            
+            videos_needing_scaling, videos_complete, videos_incomplete = check_videos_needing_scaling(
+                project_root=project_root,
+                augmented_metadata_path=augmented_metadata_path,
+                output_dir=output_dir,
+                target_size=args.target_size,
+                start_idx=args.start_idx,
+                end_idx=args.end_idx
+            )
+            pass1_duration = time.time() - pass1_start
+            
+            logger.info("=" * 80)
+            logger.info("PASS 1 COMPLETE: Scaling Status Check")
+            logger.info("=" * 80)
+            logger.info(f"Check duration: {pass1_duration:.2f} seconds ({pass1_duration / 60:.2f} minutes)")
+            logger.info(f"Total videos checked: {videos_complete + videos_incomplete}")
+            logger.info(f"Videos with scaled versions: {videos_complete}")
+            logger.info(f"Videos needing scaling: {videos_incomplete}")
+            logger.info("=" * 80)
+            
+            if videos_incomplete == 0:
+                logger.info("All videos already have scaled versions!")
+                logger.info("Running verification pass to ensure metadata completeness...")
+                # Still run stage3_scale_videos to ensure metadata is complete
+                result_df = stage3_scale_videos(
+                    project_root=str(project_root),
+                    augmented_metadata_path=str(augmented_metadata_path),
+                    output_dir=args.output_dir,
+                    method=args.method,
+                    target_size=args.target_size,
+                    chunk_size=args.chunk_size,
+                    autoencoder_model=args.autoencoder_model,
+                    start_idx=args.start_idx,
+                    end_idx=args.end_idx,
+                    delete_existing=args.delete_existing,
+                    resume=args.resume,
+                    execution_order=execution_order
+                )
+            else:
+                logger.info("=" * 80)
+                logger.info("PASS 2: Scaling videos that need processing...")
+                logger.info("=" * 80)
+                # Pass 2: Scale videos (stage3_scale_videos will automatically skip existing ones in resume mode)
+                result_df = stage3_scale_videos(
+                    project_root=str(project_root),
+                    augmented_metadata_path=str(augmented_metadata_path),
+                    output_dir=args.output_dir,
+                    method=args.method,
+                    target_size=args.target_size,
+                    chunk_size=args.chunk_size,
+                    autoencoder_model=args.autoencoder_model,
+                    start_idx=args.start_idx,
+                    end_idx=args.end_idx,
+                    delete_existing=args.delete_existing,
+                    resume=args.resume,
+                    execution_order=execution_order
+                )
+        else:
+            # Non-resume mode: scale all videos
+            logger.info("=" * 80)
+            logger.info("Starting Stage 3: Video Scaling")
+            logger.info("=" * 80)
+            logger.info("This may take a while depending on dataset size...")
+            logger.info("Progress will be logged in real-time")
+            logger.info("=" * 80)
+            
+            result_df = stage3_scale_videos(
             project_root=str(project_root),
             augmented_metadata_path=str(augmented_metadata_path),
             output_dir=args.output_dir,

@@ -23,14 +23,18 @@ logger = logging.getLogger(__name__)
 
 # Check if ffprobe is available (check once at module load)
 _FFPROBE_AVAILABLE = None
+_FFPROBE_WARNING_LOGGED = False
 
 def _check_ffprobe_available() -> bool:
     """Check if ffprobe is available in PATH."""
-    global _FFPROBE_AVAILABLE
+    global _FFPROBE_AVAILABLE, _FFPROBE_WARNING_LOGGED
     if _FFPROBE_AVAILABLE is None:
         _FFPROBE_AVAILABLE = shutil.which('ffprobe') is not None
-        if not _FFPROBE_AVAILABLE:
-            logger.debug("ffprobe not found in PATH - codec cue extraction will be disabled")
+        if not _FFPROBE_AVAILABLE and not _FFPROBE_WARNING_LOGGED:
+            # Log once at INFO level (not DEBUG) so user knows, but don't spam
+            logger.info("ffprobe not found in PATH - codec cue extraction will be disabled (this is optional)")
+            logger.info("  To enable codec cues, install ffmpeg: conda install -c conda-forge ffmpeg (or apt-get install ffmpeg)")
+            _FFPROBE_WARNING_LOGGED = True
     return _FFPROBE_AVAILABLE
 
 

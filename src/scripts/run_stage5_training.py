@@ -17,6 +17,8 @@ import sys
 import logging
 import argparse
 import time
+import signal
+import traceback
 from pathlib import Path
 from typing import List
 
@@ -24,17 +26,78 @@ from typing import List
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# Setup signal handlers to catch crashes and log diagnostics
+def setup_crash_handlers(logger):
+    """Setup signal handlers to catch crashes and log diagnostics."""
+    def crash_handler(signum, frame):
+        """Handle crash signals and log diagnostics before exit."""
+        logger.critical("=" * 80)
+        logger.critical("CRITICAL: Process received signal %d (likely crash/segfault)", signum)
+        logger.critical("=" * 80)
+        logger.critical("Signal name: %s", signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum))
+        logger.critical("Attempting to log diagnostics before crash...")
+        
+        try:
+            import psutil
+            process = psutil.Process()
+            logger.critical("Memory usage: RSS=%.2f GB, VMS=%.2f GB", 
+                          process.memory_info().rss / 1024**3,
+                          process.memory_info().vms / 1024**3)
+        except Exception:
+            pass
+        
+        try:
+            logger.critical("Stack trace at crash:")
+            for line in traceback.format_stack(frame):
+                logger.critical(line.rstrip())
+        except Exception:
+            pass
+        
+        logger.critical("=" * 80)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # Re-raise to get core dump
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+    
+    # Register handlers for common crash signals
+    if hasattr(signal, 'SIGSEGV'):
+        signal.signal(signal.SIGSEGV, crash_handler)
+    if hasattr(signal, 'SIGABRT'):
+        signal.signal(signal.SIGABRT, crash_handler)
+    if hasattr(signal, 'SIGBUS'):
+        signal.signal(signal.SIGBUS, crash_handler)
+    if hasattr(signal, 'SIGFPE'):
+        signal.signal(signal.SIGFPE, crash_handler)
+
 from lib.training.pipeline import stage5_train_models
 from lib.training.video_training_pipeline import FEATURE_BASED_MODELS, VIDEO_BASED_MODELS
 from lib.utils.memory import log_memory_stats
 
 # Setup logging (INFO level for production, DEBUG is too verbose)
+# Configure for immediate output (unbuffered)
+class FlushingStreamHandler(logging.StreamHandler):
+    """StreamHandler that flushes after each log message."""
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] [%(name)s:%(lineno)d] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    force=True,  # Override any existing configuration
+    handlers=[FlushingStreamHandler(sys.stdout)]  # Use flushing handler
 )
 logger = logging.getLogger(__name__)
+
+# Force immediate flushing for all handlers
+for handler in logging.root.handlers:
+    if hasattr(handler, 'stream') and hasattr(handler.stream, 'flush'):
+        handler.stream.flush()
+
+# Setup crash handlers after logger is created
+setup_crash_handlers(logger)
 
 
 def main():
@@ -227,6 +290,10 @@ Examples:
     ))
     logging.getLogger().addHandler(file_handler)
     
+    # Force immediate flushing for file handler
+    if hasattr(file_handler, 'stream') and hasattr(file_handler.stream, 'flush'):
+        file_handler.stream.flush()
+    
     # Start logging
     logger.info("=" * 80)
     logger.info("STAGE 5: MODEL TRAINING")
@@ -290,6 +357,11 @@ Examples:
     logger.info("=" * 80)
     
     stage_start = time.time()
+    
+    # Immediate logging before calling pipeline function
+    logger.info("Calling Stage 5 training pipeline...")
+    logger.info("This may take a while - progress will be logged in real-time")
+    sys.stdout.flush()  # Ensure immediate output
     
     try:
         # Use pipeline defaults for batch_size/epochs (from model config)
@@ -363,9 +435,31 @@ Examples:
 
 
 if __name__ == "__main__":
-    exit_code = main()
-    # Ensure all output is flushed before exit
-    sys.stdout.flush()
-    sys.stderr.flush()
-    sys.exit(exit_code)
+    try:
+        exit_code = main()
+        # Ensure all output is flushed before exit
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.exit(exit_code)
+    except SystemExit:
+        # Re-raise system exits (normal termination)
+        raise
+    except KeyboardInterrupt:
+        logger.critical("Process interrupted by user")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.exit(130)
+    except Exception as e:
+        # Catch any unhandled exceptions that might lead to crashes
+        logger.critical("=" * 80)
+        logger.critical("UNHANDLED EXCEPTION - This may cause a crash")
+        logger.critical("=" * 80)
+        logger.critical(f"Exception type: {type(e).__name__}")
+        logger.critical(f"Exception message: {str(e)}")
+        logger.critical("Full traceback:", exc_info=True)
+        logger.critical("=" * 80)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # Re-raise to get proper exit code
+        raise
 

@@ -9,6 +9,7 @@ Two versions:
 from __future__ import annotations
 
 import os
+import sys
 import logging
 from typing import Optional
 import numpy as np
@@ -129,33 +130,47 @@ class LogisticRegressionBaseline:
                     f"Please run Stage 4 scaled feature extraction first."
                 )
             logger.info(f"Using Stage 4 features from: {stage4_path} ({test_df.height} rows)")
-        else:
-            logger.info(
-                f"Loading features for {len(video_paths)} videos "
-                f"(Stage 2: {stage2_path}, Stage 4: {stage4_path if stage4_path else 'not used'})..."
+        
+        # Load and combine features (for both stage2_only and stage2_stage4 modes)
+        logger.info(
+            f"Loading features for {len(video_paths)} videos "
+            f"(Stage 2: {stage2_path}, Stage 4: {stage4_path if stage4_path else 'not used'})..."
+        )
+        logger.info(f"Stage 2 path: {stage2_path}")
+        logger.info(f"Stage 4 path: {stage4_path if stage4_path else 'not used'}")
+        sys.stdout.flush()
+        
+        # NOTE: Collinearity removal should already be done before splits in the main pipeline
+        # We load without removing collinearity here to avoid doing it multiple times
+        try:
+            features, feature_names, kept_indices, valid_video_indices = load_and_combine_features(
+                features_stage2_path=stage2_path,
+                features_stage4_path=stage4_path,
+                video_paths=video_paths,
+                project_root=project_root,
+                remove_collinearity=False,  # Already done before splits in main pipeline
+                correlation_threshold=0.95,
+                collinearity_method="correlation"
             )
-            
-            # Load and combine features
-            # NOTE: Collinearity removal should already be done before splits in the main pipeline
-            # We load without removing collinearity here to avoid doing it multiple times
-            try:
-                features, feature_names, kept_indices, valid_video_indices = load_and_combine_features(
-                    features_stage2_path=stage2_path,
-                    features_stage4_path=stage4_path,
-                    video_paths=video_paths,
-                    project_root=project_root,
-                    remove_collinearity=False,  # Already done before splits in main pipeline
-                    correlation_threshold=0.95,
-                    collinearity_method="correlation"
-                )
-                logger.info(f"✓ Loaded {len(feature_names)} features (collinearity already removed)")
-            except Exception as e:
-                logger.error(f"Failed to load features: {e}", exc_info=True)
-                logger.error(
-                    "Make sure Stage 2/4 features are already extracted. "
-                    "Do NOT re-extract features during training."
-                )
-                raise
+            logger.info(f"✓ Loaded {len(feature_names)} features (collinearity already removed)")
+            logger.info(f"Feature matrix shape: {features.shape if features is not None else 'None'}")
+            sys.stdout.flush()
+        except MemoryError as e:
+            logger.critical(f"Memory error during feature loading: {e}")
+            logger.critical("This may indicate insufficient memory or corrupted feature files")
+            raise
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Failed to load features: {e}", exc_info=True)
+            if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                logger.critical("CRITICAL: Possible crash during feature loading")
+                logger.critical("This may indicate corrupted feature files or library incompatibility")
+                logger.critical(f"Check feature files: Stage 2: {stage2_path}, Stage 4: {stage4_path}")
+            logger.error(
+                "Make sure Stage 2/4 features are already extracted. "
+                "Do NOT re-extract features during training."
+            )
+            raise
         
         # Filter to valid videos if needed
         if valid_video_indices is not None and len(valid_video_indices) > 0:
@@ -193,10 +208,30 @@ class LogisticRegressionBaseline:
         
         # Scale features
         logger.info("Scaling features...")
+        logger.info(f"Feature matrix shape: {features.shape}, dtype: {features.dtype}")
+        logger.info(f"Feature stats: min={np.nanmin(features):.4f}, max={np.nanmax(features):.4f}, mean={np.nanmean(features):.4f}")
+        sys.stdout.flush()
+        
+        # Check for corrupted features before scaling
+        if np.any(np.isnan(features)):
+            nan_count = np.isnan(features).sum()
+            logger.warning(f"Found {nan_count} NaN values in features, replacing with 0")
+            features = np.nan_to_num(features, nan=0.0)
+        if np.any(np.isinf(features)):
+            inf_count = np.isinf(features).sum()
+            logger.warning(f"Found {inf_count} Inf values in features, replacing with 0")
+            features = np.nan_to_num(features, posinf=0.0, neginf=0.0)
+        
         try:
             features_scaled = self.scaler.fit_transform(features)
+            logger.info(f"Feature scaling completed. Scaled shape: {features_scaled.shape}")
+        except MemoryError as e:
+            logger.critical(f"Memory error during feature scaling: {e}")
+            logger.critical(f"Feature matrix size: {features.nbytes / 1024**2:.2f} MB")
+            raise
         except Exception as e:
             logger.error(f"Failed to scale features: {e}", exc_info=True)
+            logger.error(f"Feature matrix shape: {features.shape}, dtype: {features.dtype}")
             raise
         
         # Validate scaled features
@@ -206,10 +241,23 @@ class LogisticRegressionBaseline:
         
         # Train model
         logger.info("Training Logistic Regression...")
+        logger.info(f"Training samples: {features_scaled.shape[0]}, Features: {features_scaled.shape[1]}")
+        logger.info(f"Label distribution: {np.bincount(y)}")
+        sys.stdout.flush()
+        
         try:
             self.model.fit(features_scaled, y)
+            logger.info("✓ Logistic Regression training completed")
+        except MemoryError as e:
+            logger.critical(f"Memory error during Logistic Regression training: {e}")
+            logger.critical(f"Feature matrix size: {features_scaled.nbytes / 1024**2:.2f} MB")
+            raise
         except Exception as e:
+            error_msg = str(e)
             logger.error(f"Failed to train Logistic Regression: {e}", exc_info=True)
+            if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                logger.critical("CRITICAL: Possible crash during sklearn LogisticRegression.fit()")
+                logger.critical("This may indicate corrupted features, memory issue, or sklearn library incompatibility")
             raise
         
         self.is_fitted = True
@@ -261,13 +309,28 @@ class LogisticRegressionBaseline:
             )
         
         # Load and combine features
-        features, _, _, _ = load_and_combine_features(
-            features_stage2_path=stage2_path,
-            features_stage4_path=stage4_path,
-            video_paths=video_paths,
-            project_root=project_root,
-            remove_collinearity=False  # Don't remove collinearity again, use same features as training
-        )
+        logger.info(f"Loading features for prediction ({len(video_paths)} videos)...")
+        sys.stdout.flush()
+        
+        try:
+            features, _, _, _ = load_and_combine_features(
+                features_stage2_path=stage2_path,
+                features_stage4_path=stage4_path,
+                video_paths=video_paths,
+                project_root=project_root,
+                remove_collinearity=False  # Don't remove collinearity again, use same features as training
+            )
+            logger.info(f"✓ Loaded features for prediction (shape: {features.shape if features is not None else 'None'})")
+        except MemoryError as e:
+            logger.critical(f"Memory error during feature loading in predict(): {e}")
+            raise
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Failed to load features in predict(): {e}", exc_info=True)
+            if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                logger.critical("CRITICAL: Possible crash during feature loading in predict()")
+                logger.critical(f"Check feature files: Stage 2: {stage2_path}, Stage 4: {stage4_path}")
+            raise
         
         # Apply same feature filtering as during training
         if self.feature_indices is not None:
@@ -275,10 +338,45 @@ class LogisticRegressionBaseline:
             logger.debug(f"Applied feature filtering: {len(self.feature_indices)} features")
         
         # Scale features
-        features_scaled = self.scaler.transform(features)
+        logger.info(f"Scaling features for prediction (shape: {features.shape})...")
+        sys.stdout.flush()
+        
+        # Check for corrupted features before scaling
+        if np.any(np.isnan(features)):
+            nan_count = np.isnan(features).sum()
+            logger.warning(f"Found {nan_count} NaN values in prediction features, replacing with 0")
+            features = np.nan_to_num(features, nan=0.0)
+        if np.any(np.isinf(features)):
+            inf_count = np.isinf(features).sum()
+            logger.warning(f"Found {inf_count} Inf values in prediction features, replacing with 0")
+            features = np.nan_to_num(features, posinf=0.0, neginf=0.0)
+        
+        try:
+            features_scaled = self.scaler.transform(features)
+        except MemoryError as e:
+            logger.critical(f"Memory error during feature scaling in predict(): {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to scale features in predict(): {e}", exc_info=True)
+            raise
         
         # Predict probabilities
-        probs = self.model.predict_proba(features_scaled)
+        logger.info("Running LogisticRegression.predict_proba()...")
+        sys.stdout.flush()
+        
+        try:
+            probs = self.model.predict_proba(features_scaled)
+            logger.info(f"✓ Prediction completed (shape: {probs.shape})")
+        except MemoryError as e:
+            logger.critical(f"Memory error during LogisticRegression.predict_proba(): {e}")
+            raise
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Failed to predict probabilities: {e}", exc_info=True)
+            if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                logger.critical("CRITICAL: Possible crash during sklearn LogisticRegression.predict_proba()")
+                logger.critical("This may indicate corrupted features, memory issue, or sklearn library incompatibility")
+            raise
         
         return probs
     

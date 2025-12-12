@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import sys
+import signal
+import traceback
 import logging
 import argparse
 import json
@@ -31,6 +33,50 @@ import joblib
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# Setup signal handlers to catch crashes and log diagnostics
+def setup_crash_handlers(logger):
+    """Setup signal handlers to catch crashes and log diagnostics."""
+    def crash_handler(signum, frame):
+        """Handle crash signals and log diagnostics before exit."""
+        logger.critical("=" * 80)
+        logger.critical("CRITICAL: Process received signal %d (likely crash/segfault)", signum)
+        logger.critical("=" * 80)
+        logger.critical("Signal name: %s", signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum))
+        logger.critical("Attempting to log diagnostics before crash...")
+        
+        try:
+            import psutil
+            process = psutil.Process()
+            logger.critical("Memory usage: RSS=%.2f GB, VMS=%.2f GB", 
+                          process.memory_info().rss / 1024**3,
+                          process.memory_info().vms / 1024**3)
+        except Exception:
+            pass
+        
+        try:
+            logger.critical("Stack trace at crash:")
+            for line in traceback.format_stack(frame):
+                logger.critical(line.rstrip())
+        except Exception:
+            pass
+        
+        logger.critical("=" * 80)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # Re-raise to get core dump
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+    
+    # Register handlers for common crash signals
+    if hasattr(signal, 'SIGSEGV'):
+        signal.signal(signal.SIGSEGV, crash_handler)
+    if hasattr(signal, 'SIGABRT'):
+        signal.signal(signal.SIGABRT, crash_handler)
+    if hasattr(signal, 'SIGBUS'):
+        signal.signal(signal.SIGBUS, crash_handler)
+    if hasattr(signal, 'SIGFPE'):
+        signal.signal(signal.SIGFPE, crash_handler)
+
 from lib.training.feature_training_pipeline import load_features_for_training
 from lib.training.feature_pipeline import create_stratified_splits
 from lib.utils.paths import load_metadata_flexible
@@ -40,6 +86,9 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] [%(name)s:%(lineno)d] %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Setup crash handlers after logger is created
+setup_crash_handlers(logger)
 
 
 def train_sklearn_logreg(
@@ -200,11 +249,44 @@ def train_sklearn_logreg(
             "This may indicate an issue with the parameter grid configuration."
         )
     
-    # Scale features
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_val_scaled = scaler.transform(X_val)
-    X_test_scaled = scaler.transform(X_test)
+    # Scale features with defensive error handling
+    logger.info("Scaling features...")
+    logger.info(f"Train shape: {X_train.shape}, dtype: {X_train.dtype}")
+    logger.info(f"Feature stats: min={np.nanmin(X_train):.4f}, max={np.nanmax(X_train):.4f}, mean={np.nanmean(X_train):.4f}")
+    sys.stdout.flush()
+    
+    # Check for corrupted features before scaling
+    if np.any(np.isnan(X_train)):
+        nan_count = np.isnan(X_train).sum()
+        logger.warning(f"Found {nan_count} NaN values in training features, replacing with 0")
+        X_train = np.nan_to_num(X_train, nan=0.0)
+    if np.any(np.isinf(X_train)):
+        inf_count = np.isinf(X_train).sum()
+        logger.warning(f"Found {inf_count} Inf values in training features, replacing with 0")
+        X_train = np.nan_to_num(X_train, posinf=0.0, neginf=0.0)
+    
+    try:
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        logger.info(f"Feature scaling completed. Scaled shape: {X_train_scaled.shape}")
+    except MemoryError as e:
+        logger.critical(f"Memory error during feature scaling: {e}")
+        logger.critical(f"Feature matrix size: {X_train.nbytes / 1024**2:.2f} MB")
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Failed to scale features: {e}", exc_info=True)
+        if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+            logger.critical("CRITICAL: Possible crash during sklearn StandardScaler.fit_transform()")
+            logger.critical("This may indicate corrupted features, memory issue, or sklearn library incompatibility")
+        raise
+    
+    try:
+        X_val_scaled = scaler.transform(X_val)
+        X_test_scaled = scaler.transform(X_test)
+    except Exception as e:
+        logger.error(f"Failed to transform validation/test features: {e}", exc_info=True)
+        raise
     
     # Grid search
     best_score = -1
@@ -217,15 +299,49 @@ def train_sklearn_logreg(
         
         try:
             # Params already have l1_ratio removed for non-elasticnet penalties
+            logger.info(f"Training LogisticRegression with params: {params}")
+            logger.info(f"Training data: {X_train_scaled.shape[0]} samples, {X_train_scaled.shape[1]} features")
+            sys.stdout.flush()
+            
             model = LogisticRegression(
                 **params,
                 random_state=42,
                 n_jobs=1
             )
-            model.fit(X_train_scaled, y_train)
             
-            # Validate
-            val_probs_full = model.predict_proba(X_val_scaled)
+            try:
+                model.fit(X_train_scaled, y_train)
+                logger.info(f"✓ Model.fit() completed successfully")
+            except MemoryError as e:
+                logger.critical(f"Memory error during LogisticRegression.fit(): {e}")
+                logger.critical(f"Feature matrix size: {X_train_scaled.nbytes / 1024**2:.2f} MB")
+                raise
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Failed to train LogisticRegression: {e}", exc_info=True)
+                if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                    logger.critical("CRITICAL: Possible crash during sklearn LogisticRegression.fit()")
+                    logger.critical("This may indicate corrupted features, memory issue, or sklearn library incompatibility")
+                raise
+            
+            # Validate with defensive error handling
+            logger.info("Running model.predict_proba() on validation set...")
+            sys.stdout.flush()
+            
+            try:
+                val_probs_full = model.predict_proba(X_val_scaled)
+                logger.info(f"✓ predict_proba() completed (shape: {val_probs_full.shape})")
+            except MemoryError as e:
+                logger.critical(f"Memory error during LogisticRegression.predict_proba(): {e}")
+                raise
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Failed to predict probabilities: {e}", exc_info=True)
+                if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                    logger.critical("CRITICAL: Possible crash during sklearn LogisticRegression.predict_proba()")
+                    logger.critical("This may indicate corrupted features, memory issue, or sklearn library incompatibility")
+                raise
+            
             if val_probs_full.shape[1] != 2:
                 raise ValueError(f"Expected binary classification, got {val_probs_full.shape[1]} classes")
             val_probs = val_probs_full[:, 1]
@@ -440,4 +556,29 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+        # Ensure all output is flushed before exit
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except SystemExit:
+        # Re-raise system exits (normal termination)
+        raise
+    except KeyboardInterrupt:
+        logger.critical("Process interrupted by user")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.exit(130)
+    except Exception as e:
+        # Catch any unhandled exceptions that might lead to crashes
+        logger.critical("=" * 80)
+        logger.critical("UNHANDLED EXCEPTION - This may cause a crash")
+        logger.critical("=" * 80)
+        logger.critical(f"Exception type: {type(e).__name__}")
+        logger.critical(f"Exception message: {str(e)}")
+        logger.critical("Full traceback:", exc_info=True)
+        logger.critical("=" * 80)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # Re-raise to get proper exit code
+        raise

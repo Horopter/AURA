@@ -781,7 +781,34 @@ def stage1_augment_videos(
                         break
                 
                 if all_augmentations_exist:
-                    logger.info(f"Video {video_id} already has all {num_augmentations} augmentations, skipping...")
+                    logger.info(f"Video {video_id} already has all {num_augmentations} augmentations, checking original entry...")
+                    # Even if all augmentations exist, ensure original video entry is in metadata
+                    original_output = output_dir / f"{video_id}_original.mp4"
+                    if not original_output.exists():
+                        import shutil
+                        original_output.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(video_path, original_output)
+                    
+                    # Check if original is already in metadata
+                    original_already_in_metadata = False
+                    if existing_metadata is not None:
+                        for row in existing_metadata.iter_rows(named=True):
+                            if row.get("original_video") == video_rel and row.get("is_original") == True:
+                                original_already_in_metadata = True
+                                break
+                    
+                    if not original_already_in_metadata:
+                        logger.info(f"Adding missing original entry for video {video_id} to metadata")
+                        metadata_rows.append({
+                            "video_path": str(original_output.relative_to(project_root)),
+                            "label": label,
+                            "original_video": video_rel,
+                            "augmentation_idx": -1,  # -1 indicates original
+                            "is_original": True
+                        })
+                        total_videos_processed += 1
+                    else:
+                        logger.debug(f"Original entry already exists in metadata for video {video_id}")
                     continue
             
             original_output = output_dir / f"{video_id}_original.mp4"
@@ -880,70 +907,175 @@ def stage1_augment_videos(
             logger.error(f"Error processing video {video_rel}: {e}", exc_info=True)
             continue
     
-    # Reconstruct metadata from existing files if needed
-    # This ensures that if all augmentations already exist and were skipped,
-    # or if the metadata file is missing/corrupted, we rebuild it from the files
-    needs_reconstruction = False
-    # Check if any metadata file exists
-    metadata_exists = (metadata_path_arrow.exists() or 
-                      metadata_path_parquet.exists() or 
-                      metadata_path_csv.exists())
-    if not metadata_exists:
-        needs_reconstruction = True
-        logger.info("Stage 1: Metadata file missing, reconstructing from existing augmentation files...")
-    elif metadata_path and metadata_path.exists() and metadata_path.stat().st_size == 0:
-        needs_reconstruction = True
-        logger.info("Stage 1: Metadata file is empty, reconstructing from existing augmentation files...")
-    else:
-        # Check if metadata is incomplete (has fewer entries than expected files)
+    # Merge new metadata_rows with existing metadata and write final file
+    logger.info("=" * 80)
+    logger.info("Stage 1: Merging new augmentations with existing metadata...")
+    logger.info("=" * 80)
+    
+    # Load existing metadata if it exists (support Arrow/Parquet/CSV)
+    # Note: existing_metadata was loaded earlier, but we need to reload it here
+    # to ensure we have the latest version after any deletions
+    existing_metadata_for_merge = None
+    if metadata_path and metadata_path.exists():
         try:
             if metadata_path.suffix == '.arrow':
-                existing_metadata_df = pl.read_ipc(metadata_path)
+                existing_metadata_for_merge = pl.read_ipc(metadata_path)
             elif metadata_path.suffix == '.parquet':
-                existing_metadata_df = pl.read_parquet(metadata_path)
+                existing_metadata_for_merge = pl.read_parquet(metadata_path)
             else:
-                existing_metadata_df = pl.read_csv(str(metadata_path))
-            # Count expected files: original + augmentations for each video in range
-            expected_entries = df.height * (1 + num_augmentations)  # 1 original + num_augmentations per video
-            if existing_metadata_df.height < expected_entries * 0.5:  # If less than 50% of expected
-                needs_reconstruction = True
-                logger.info(f"Stage 1: Metadata appears incomplete ({existing_metadata_df.height} entries, expected ~{expected_entries}), reconstructing...")
-        except Exception:
-            needs_reconstruction = True
-            logger.info("Stage 1: Could not read metadata file, reconstructing from existing augmentation files...")
-    
-    if needs_reconstruction:
-        _reconstruct_metadata_from_files(metadata_path, output_dir, project_root, df, num_augmentations)
-    
-    # Load final metadata (support Arrow/Parquet/CSV)
-    metadata_paths = [
-        output_dir / "augmented_metadata.arrow",
-        output_dir / "augmented_metadata.parquet",
-        output_dir / "augmented_metadata.csv"
-    ]
-    metadata_path_found = None
-    for mp in metadata_paths:
-        if mp.exists():
-            metadata_path_found = mp
-            break
-    
-    if metadata_path_found:
-        try:
-            if metadata_path_found.suffix == '.arrow':
-                metadata_df = pl.read_ipc(metadata_path_found)
-            elif metadata_path_found.suffix == '.parquet':
-                metadata_df = pl.read_parquet(metadata_path_found)
-            else:
-                metadata_df = pl.read_csv(str(metadata_path_found))
-            logger.info(f"\n✓ Stage 1 complete: Metadata available at {metadata_path_found}")
-            logger.info(f"✓ Stage 1: Total entries in metadata: {metadata_df.height}")
-            if total_videos_processed > 0:
-                logger.info(f"✓ Stage 1: Processed {total_videos_processed} videos in this run")
-            return metadata_df
+                existing_metadata_for_merge = pl.read_csv(str(metadata_path))
+            logger.info(f"Loaded existing metadata: {existing_metadata_for_merge.height} entries")
         except Exception as e:
-            logger.error(f"Failed to read metadata: {e}")
+            logger.warning(f"Could not load existing metadata: {e}, will create new file")
+            existing_metadata_for_merge = None
+    
+    # Create DataFrame from new metadata_rows
+    if metadata_rows:
+        new_metadata_df = pl.DataFrame(metadata_rows)
+        logger.info(f"New augmentations to add: {new_metadata_df.height} entries")
+        
+        # Merge with existing metadata (avoid duplicates)
+        if existing_metadata_for_merge is not None and existing_metadata_for_merge.height > 0:
+            # Create a set of existing entries to avoid duplicates
+            existing_keys = set()
+            for row in existing_metadata_for_merge.iter_rows(named=True):
+                key = (
+                    row.get("video_path", ""),
+                    row.get("original_video", ""),
+                    row.get("augmentation_idx", -999)
+                )
+                existing_keys.add(key)
+            
+            # Filter out duplicates from new entries
+            new_entries_filtered = []
+            for row in metadata_rows:
+                key = (
+                    row.get("video_path", ""),
+                    row.get("original_video", ""),
+                    row.get("augmentation_idx", -999)
+                )
+                if key not in existing_keys:
+                    new_entries_filtered.append(row)
+            
+            if new_entries_filtered:
+                new_metadata_df = pl.DataFrame(new_entries_filtered)
+                logger.info(f"After deduplication: {new_metadata_df.height} new entries to add")
+                combined_metadata_df = pl.concat([existing_metadata_for_merge, new_metadata_df])
+            else:
+                logger.info("All new entries already exist in metadata, no merge needed")
+                combined_metadata_df = existing_metadata_for_merge
+        else:
+            combined_metadata_df = new_metadata_df
+        
+        # Write final metadata file (prefer Arrow, fallback to Parquet, then CSV)
+        logger.info(f"Writing final metadata file with {combined_metadata_df.height} total entries...")
+        
+        # Try Arrow first
+        final_metadata_path = output_dir / "augmented_metadata.arrow"
+        success = write_metadata_atomic(combined_metadata_df, final_metadata_path)
+        
+        if not success:
+            # Fallback to Parquet
+            final_metadata_path = output_dir / "augmented_metadata.parquet"
+            success = write_metadata_atomic(combined_metadata_df, final_metadata_path)
+            if success:
+                logger.info(f"✓ Saved metadata as Parquet: {final_metadata_path}")
+        else:
+            logger.info(f"✓ Saved metadata as Arrow IPC: {final_metadata_path}")
+        
+        if not success:
+            # Final fallback to CSV
+            final_metadata_path = output_dir / "augmented_metadata.csv"
+            try:
+                combined_metadata_df.write_csv(final_metadata_path)
+                logger.info(f"✓ Saved metadata as CSV: {final_metadata_path}")
+                success = True
+            except Exception as e:
+                logger.error(f"Failed to save metadata as CSV: {e}")
+                success = False
+        
+        # Remove old metadata files if format changed
+        if success and metadata_path and metadata_path != final_metadata_path and metadata_path.exists():
+            try:
+                metadata_path.unlink()
+                logger.debug(f"Removed old metadata file: {metadata_path}")
+            except Exception:
+                pass
+        
+        if success:
+            logger.info(f"✓ Final metadata file written: {final_metadata_path}")
+            logger.info(f"  Total entries: {combined_metadata_df.height}")
+            logger.info(f"  Original entries: {existing_metadata_for_merge.height if existing_metadata_for_merge is not None else 0}")
+            logger.info(f"  New entries added: {len(new_entries_filtered) if 'new_entries_filtered' in locals() else new_metadata_df.height}")
+            return combined_metadata_df
+        else:
+            logger.error("Failed to write final metadata file!")
             return pl.DataFrame()
     else:
-        logger.error("Stage 1: No metadata file found and could not reconstruct!")
-        return pl.DataFrame()
+        # No new metadata_rows, but check if we need to reconstruct
+        logger.info("No new augmentations generated in this run")
+        
+        # Reconstruct metadata from existing files if needed
+        needs_reconstruction = False
+        metadata_exists = (metadata_path_arrow.exists() or 
+                          metadata_path_parquet.exists() or 
+                          metadata_path_csv.exists())
+        if not metadata_exists:
+            needs_reconstruction = True
+            logger.info("Stage 1: Metadata file missing, reconstructing from existing augmentation files...")
+        elif metadata_path and metadata_path.exists() and metadata_path.stat().st_size == 0:
+            needs_reconstruction = True
+            logger.info("Stage 1: Metadata file is empty, reconstructing from existing augmentation files...")
+        else:
+            # Check if metadata is incomplete
+            try:
+                if metadata_path.suffix == '.arrow':
+                    existing_metadata_df_check = pl.read_ipc(metadata_path)
+                elif metadata_path.suffix == '.parquet':
+                    existing_metadata_df_check = pl.read_parquet(metadata_path)
+                else:
+                    existing_metadata_df_check = pl.read_csv(str(metadata_path))
+                # Count expected files: original + augmentations for each video in range
+                expected_entries = df.height * (1 + num_augmentations)  # 1 original + num_augmentations per video
+                if existing_metadata_df_check.height < expected_entries * 0.5:  # If less than 50% of expected
+                    needs_reconstruction = True
+                    logger.info(f"Stage 1: Metadata appears incomplete ({existing_metadata_df_check.height} entries, expected ~{expected_entries}), reconstructing...")
+            except Exception:
+                needs_reconstruction = True
+                logger.info("Stage 1: Could not read metadata file, reconstructing from existing augmentation files...")
+        
+        if needs_reconstruction:
+            _reconstruct_metadata_from_files(metadata_path, output_dir, project_root, df, num_augmentations)
+        
+        # Load final metadata (support Arrow/Parquet/CSV)
+        metadata_paths = [
+            output_dir / "augmented_metadata.arrow",
+            output_dir / "augmented_metadata.parquet",
+            output_dir / "augmented_metadata.csv"
+        ]
+        metadata_path_found = None
+        for mp in metadata_paths:
+            if mp.exists():
+                metadata_path_found = mp
+                break
+        
+        if metadata_path_found:
+            try:
+                if metadata_path_found.suffix == '.arrow':
+                    metadata_df = pl.read_ipc(metadata_path_found)
+                elif metadata_path_found.suffix == '.parquet':
+                    metadata_df = pl.read_parquet(metadata_path_found)
+                else:
+                    metadata_df = pl.read_csv(str(metadata_path_found))
+                logger.info(f"\n✓ Stage 1 complete: Metadata available at {metadata_path_found}")
+                logger.info(f"✓ Stage 1: Total entries in metadata: {metadata_df.height}")
+                if total_videos_processed > 0:
+                    logger.info(f"✓ Stage 1: Processed {total_videos_processed} videos in this run")
+                return metadata_df
+            except Exception as e:
+                logger.error(f"Failed to read metadata: {e}")
+                return pl.DataFrame()
+        else:
+            logger.error("Stage 1: No metadata file found and could not reconstruct!")
+            return pl.DataFrame()
 

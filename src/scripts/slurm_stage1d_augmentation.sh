@@ -282,6 +282,8 @@ cd "$ORIG_DIR" || exit 1
 
 # Ensure we're using the correct Python from venv
 PYTHON_CMD=$(which python || echo "python")
+# Use unbuffered Python for immediate output
+PYTHON_CMD="$PYTHON_CMD -u"
 
 log "Running Stage 1d augmentation script..."
 log "Log file: $LOG_FILE"

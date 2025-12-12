@@ -240,6 +240,8 @@ mkdir -p "$(dirname "$LOG_FILE")"
 
 cd "$ORIG_DIR" || FEATURES_STAGE2="$ORIG_DIR/$FEATURES_STAGE2_DIR/features_metadata.arrow"  # Dummy path
 PYTHON_CMD=$(which python || echo "python")
+# Use unbuffered Python for immediate output
+PYTHON_CMD="$PYTHON_CMD -u"
 
 # ============================================================================
 # Import Validation: Verify all imports work before expensive training

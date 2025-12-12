@@ -172,16 +172,24 @@ def check_videos_needing_augmentations(
             
             if all_augmentations_exist:
                 videos_complete += 1
-                if (idx + 1) % 100 == 0:
-                    logger.info(f"Checked {idx + 1}/{df.height} videos... ({videos_complete} complete, {videos_incomplete} need augmentations)")
             else:
                 videos_incomplete += 1
                 videos_needing_augmentations.append(idx)
+            
+            # Log progress every 100 videos or at the end
+            if (idx + 1) % 100 == 0 or (idx + 1) == df.height:
+                logger.info(f"Checked {idx + 1}/{df.height} videos... ({videos_complete} complete, {videos_incomplete} need augmentations)")
                 
         except Exception as e:
             logger.debug(f"Error checking video {video_rel}: {e}")
             videos_needing_augmentations.append(idx)
             videos_incomplete += 1
+            # Log progress even on errors
+            if (idx + 1) % 100 == 0 or (idx + 1) == df.height:
+                logger.info(f"Checked {idx + 1}/{df.height} videos... ({videos_complete} complete, {videos_incomplete} need augmentations)")
+    
+    # Final summary log
+    logger.info(f"PASS 1 complete: Checked all {df.height} videos ({videos_complete} complete, {videos_incomplete} need augmentations)")
     
     return videos_needing_augmentations, videos_complete, videos_incomplete
 
@@ -345,6 +353,7 @@ Examples:
             
             # Pass 1: Check which videos need augmentations
             pass1_start = time.time()
+            
             videos_needing_augmentations, videos_complete, videos_incomplete = check_videos_needing_augmentations(
                 project_root=project_root,
                 output_dir=output_dir,
@@ -364,7 +373,72 @@ Examples:
             logger.info("=" * 80)
             
             if videos_incomplete == 0:
-                logger.info("All videos already have augmentations. Nothing to do.")
+                logger.info("All videos already have augmentations. Verifying and updating metadata...")
+                
+                # Even though all videos are complete, we need to ensure metadata is complete
+                # Call stage1_augment_videos with all videos to verify and update metadata
+                # This will check for missing original entries and ensure complete metadata
+                logger.info("=" * 80)
+                logger.info("PASS 2: Verifying complete metadata for all videos...")
+                logger.info("=" * 80)
+                
+                # Load input metadata
+                input_metadata_path = None
+                for csv_name in ["FVC_dup.csv", "video_index_input.csv"]:
+                    candidate_path = project_root / "data" / csv_name
+                    if candidate_path.exists():
+                        input_metadata_path = candidate_path
+                        break
+                
+                if input_metadata_path is None:
+                    logger.error("Metadata file not found for resume mode")
+                    return 1
+                
+                # Call stage1_augment_videos with all videos - it will skip processing but verify metadata
+                # This ensures all original entries are added even for videos that already have augmentations
+                result_df = stage1_augment_videos(
+                    project_root=str(project_root),
+                    num_augmentations=args.num_augmentations,
+                    output_dir=args.output_dir,
+                    delete_existing=False,  # Never delete in resume mode
+                    start_idx=args.start_idx,
+                    end_idx=args.end_idx
+                )
+                
+                # Get video count for verification
+                df_verify = load_metadata(str(input_metadata_path))
+                df_verify = filter_existing_videos(df_verify, str(project_root))
+                
+                # Apply range filtering if specified
+                if args.start_idx is not None or args.end_idx is not None:
+                    total_videos_verify = df_verify.height
+                    start = args.start_idx if args.start_idx is not None else 0
+                    end = args.end_idx if args.end_idx is not None else total_videos_verify
+                    if start < 0:
+                        start = 0
+                    if end > total_videos_verify:
+                        end = total_videos_verify
+                    if start >= end:
+                        logger.warning(f"Invalid range: start_idx={start}, end_idx={end}")
+                        return 1
+                    df_verify = df_verify.slice(start, end - start)
+                
+                if result_df is not None and hasattr(result_df, 'height'):
+                    expected_total = df_verify.height * (1 + args.num_augmentations)  # 1 original + num_augmentations per video
+                    if result_df.height == expected_total:
+                        logger.info(f"✓ Metadata verified: All {result_df.height} entries present ({df_verify.height} videos × {1 + args.num_augmentations} entries)")
+                        logger.info(f"  Expected: {expected_total} entries ({df_verify.height} videos × 11 entries = {expected_total})")
+                        logger.info(f"  Actual: {result_df.height} entries")
+                    else:
+                        logger.warning(f"⚠ Metadata incomplete: {result_df.height} entries found, expected {expected_total}")
+                        logger.warning("This may indicate missing original or augmentation entries")
+                        logger.warning(f"  Missing: {expected_total - result_df.height} entries")
+                else:
+                    logger.warning("Could not verify metadata completeness")
+                
+                logger.info("=" * 80)
+                logger.info("Metadata verification complete")
+                logger.info("=" * 80)
                 return 0
             
             # Pass 2: Generate augmentations only for videos that need them

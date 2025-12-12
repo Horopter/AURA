@@ -20,7 +20,7 @@ import av
 import cv2
 
 from lib.data import load_metadata
-from lib.utils.paths import resolve_video_path, validate_video_file, get_video_metadata_cache_path
+from lib.utils.paths import resolve_video_path, validate_video_file, get_video_metadata_cache_path, load_metadata_flexible, write_metadata_atomic
 from lib.utils.memory import aggressive_gc, log_memory_stats, safe_execute
 from lib.features.handcrafted import HandcraftedFeatureExtractor
 
@@ -237,7 +237,7 @@ def stage4_extract_scaled_features(
     
     # Load scaled metadata (support CSV, Arrow, and Parquet)
     logger.info("Stage 4: Loading scaled metadata...")
-    from lib.utils.paths import load_metadata_flexible, validate_metadata_columns, write_metadata_atomic
+    from lib.utils.paths import validate_metadata_columns
     
     df = load_metadata_flexible(scaled_metadata_path)
     if df is None:
@@ -372,6 +372,42 @@ def stage4_extract_scaled_features(
             if iteration_count % 10 == 0:
                 log_memory_stats(f"Stage 4: processing video {iteration_count}/{df.height} (index {idx})")
             
+            # Check if feature file already exists (resume mode) - CHECK BEFORE EXTRACTING FEATURES
+            video_id = Path(video_path).stem
+            feature_path_parquet = output_dir / f"{video_id}_scaled_features.parquet"
+            feature_path_npy = output_dir / f"{video_id}_scaled_features.npy"
+            feature_path_rel = str(feature_path_parquet.relative_to(project_root))
+            
+            if resume and not delete_existing:
+                # Check if feature file exists BEFORE extracting features
+                if feature_path_parquet.exists() or feature_path_npy.exists():
+                    logger.debug(f"Stage 4: Feature file already exists: {feature_path_parquet} or {feature_path_npy}")
+                    if feature_path_rel in existing_feature_paths or feature_path_parquet.exists() or feature_path_npy.exists():
+                        logger.info(f"Stage 4: [{iteration_count}/{df.height}] Skipping {Path(video_path).name} - feature file already exists")
+                        skipped_count += 1
+                        # Still add to metadata if not already present
+                        if existing_metadata is None or feature_path_rel not in existing_feature_paths:
+                            logger.debug(f"Stage 4: Feature file exists but not in metadata, will try to load and add")
+                            # Try to load existing features to add to metadata
+                            try:
+                                if feature_path_parquet.exists():
+                                    import pyarrow.parquet as pq
+                                    table = pq.read_table(str(feature_path_parquet))
+                                    features_dict = {col: table[col][0].as_py() for col in table.column_names}
+                                else:
+                                    features_dict = np.load(str(feature_path_npy), allow_pickle=True).item()
+                                
+                                feature_row = {
+                                    "video_path": video_rel,
+                                    "label": label,
+                                    "feature_path": feature_path_rel,
+                                }
+                                feature_row.update(features_dict)
+                                feature_rows.append(feature_row)
+                            except Exception as e:
+                                logger.warning(f"Could not load existing features from {feature_path_parquet}: {e}")
+                        continue
+            
             # Get scaled video dimensions
             scaled_width = None
             scaled_height = None
@@ -438,42 +474,6 @@ def stage4_extract_scaled_features(
             features["is_downscaled"] = float(is_downscaled)
             logger.debug(f"Stage 4: Added scaling indicators: is_upscaled={is_upscaled}, is_downscaled={is_downscaled}")
             logger.debug(f"Stage 4: Total features after adding indicators: {len(features)}")
-            
-            # Check if feature file already exists (resume mode)
-            video_id = Path(video_path).stem
-            feature_path_parquet = output_dir / f"{video_id}_scaled_features.parquet"
-            feature_path_npy = output_dir / f"{video_id}_scaled_features.npy"
-            feature_path_rel = str(feature_path_parquet.relative_to(project_root))
-            
-            if resume and not delete_existing:
-                # Check if feature file exists
-                if feature_path_parquet.exists() or feature_path_npy.exists():
-                    logger.debug(f"Stage 4: Feature file already exists: {feature_path_parquet} or {feature_path_npy}")
-                    if feature_path_rel in existing_feature_paths or feature_path_parquet.exists() or feature_path_npy.exists():
-                        logger.info(f"Stage 4: [{iteration_count}/{df.height}] Skipping {Path(video_path).name} - feature file already exists")
-                        skipped_count += 1
-                        # Still add to metadata if not already present
-                        if existing_metadata is None or feature_path_rel not in existing_feature_paths:
-                            logger.debug(f"Stage 4: Feature file exists but not in metadata, will try to load and add")
-                            # Try to load existing features to add to metadata
-                            try:
-                                if feature_path_parquet.exists():
-                                    import pyarrow.parquet as pq
-                                    table = pq.read_table(str(feature_path_parquet))
-                                    features_dict = {col: table[col][0].as_py() for col in table.column_names}
-                                else:
-                                    features_dict = np.load(str(feature_path_npy), allow_pickle=True).item()
-                                
-                                feature_row = {
-                                    "video_path": video_rel,
-                                    "label": label,
-                                    "feature_path": feature_path_rel,
-                                }
-                                feature_row.update(features_dict)
-                                feature_rows.append(feature_row)
-                            except Exception as e:
-                                logger.warning(f"Could not load existing features from {feature_path_parquet}: {e}")
-                        continue
             
             # Save features as Arrow/Parquet (better than .npy)
             feature_path = feature_path_parquet
@@ -557,37 +557,119 @@ def stage4_extract_scaled_features(
             return existing_metadata
         return pl.DataFrame()
     
-    # Create DataFrame from new features
-    new_features_df = pl.DataFrame(feature_rows)
+    # Merge new metadata_rows with existing metadata and write final file
+    logger.info("=" * 80)
+    logger.info("Stage 4: Merging new scaled features with existing metadata...")
+    logger.info("=" * 80)
     
-    # Merge with existing metadata if available
-    if existing_metadata is not None and not delete_existing:
-        # Combine existing and new features, removing duplicates
-        features_df = pl.concat([existing_metadata, new_features_df]).unique(subset=["video_path"], keep="last")
-        logger.info(f"Stage 4: Merged with existing metadata. Total: {features_df.height} videos")
-    else:
-        features_df = new_features_df
-    
-    # Save metadata incrementally (append mode) to avoid overwriting concurrent writes
-    metadata_path = output_dir / "features_scaled_metadata.arrow"
+    # Create DataFrame from new feature_rows
     new_features_df = pl.DataFrame(feature_rows) if feature_rows else pl.DataFrame()
     
     if new_features_df.height > 0:
-        success = write_metadata_atomic(new_features_df, metadata_path, append=True)
+        logger.info(f"New scaled features to add: {new_features_df.height} entries")
+        
+        # Merge with existing metadata (avoid duplicates)
+        if existing_metadata is not None and existing_metadata.height > 0 and not delete_existing:
+            # Create a set of existing entries to avoid duplicates
+            existing_keys = set()
+            for row in existing_metadata.iter_rows(named=True):
+                key = row.get("video_path", "")
+                existing_keys.add(key)
+            
+            # Filter out duplicates from new entries
+            new_entries_filtered = []
+            for row in feature_rows:
+                key = row.get("video_path", "")
+                if key not in existing_keys:
+                    new_entries_filtered.append(row)
+            
+            if new_entries_filtered:
+                new_features_df = pl.DataFrame(new_entries_filtered)
+                logger.info(f"After deduplication: {new_features_df.height} new entries to add")
+                combined_features_df = pl.concat([existing_metadata, new_features_df])
+            else:
+                logger.info("All new entries already exist in metadata, no merge needed")
+                combined_features_df = existing_metadata
+        else:
+            combined_features_df = new_features_df
+        
+        # Write final metadata file (prefer Arrow, fallback to Parquet, then CSV)
+        logger.info(f"Writing final metadata file with {combined_features_df.height} total entries...")
+        
+        # Try Arrow first
+        final_metadata_path = output_dir / "features_scaled_metadata.arrow"
+        success = write_metadata_atomic(combined_features_df, final_metadata_path, append=False)
         
         if not success:
             # Fallback to Parquet
-            metadata_path = output_dir / "features_scaled_metadata.parquet"
-            success = write_metadata_atomic(new_features_df, metadata_path, append=True)
+            final_metadata_path = output_dir / "features_scaled_metadata.parquet"
+            success = write_metadata_atomic(combined_features_df, final_metadata_path, append=False)
+            if success:
+                logger.info(f"✓ Saved metadata as Parquet: {final_metadata_path}")
+        else:
+            logger.info(f"✓ Saved metadata as Arrow IPC: {final_metadata_path}")
+        
+        if not success:
+            # Final fallback to CSV
+            final_metadata_path = output_dir / "features_scaled_metadata.csv"
+            try:
+                combined_features_df.write_csv(final_metadata_path)
+                logger.info(f"✓ Saved metadata as CSV: {final_metadata_path}")
+                success = True
+            except Exception as e:
+                logger.error(f"Failed to save metadata as CSV: {e}")
+                success = False
+        
+        # Remove old metadata files if format changed
+        metadata_paths_to_check = [
+            output_dir / "features_scaled_metadata.arrow",
+            output_dir / "features_scaled_metadata.parquet",
+            output_dir / "features_scaled_metadata.csv"
+        ]
+        for old_path in metadata_paths_to_check:
+            if old_path != final_metadata_path and old_path.exists():
+                try:
+                    old_path.unlink()
+                    logger.debug(f"Removed old metadata file: {old_path}")
+                except Exception:
+                    pass
         
         if success:
-            logger.info(f"✓ Stage 4 complete: Appended features to {metadata_path}")
+            logger.info(f"✓ Final metadata file written: {final_metadata_path}")
+            logger.info(f"  Total entries: {combined_features_df.height}")
+            original_count = existing_metadata.height if existing_metadata is not None else 0
+            new_count = len(new_entries_filtered) if 'new_entries_filtered' in locals() and new_entries_filtered else new_features_df.height
+            logger.info(f"  Original entries: {original_count}")
+            logger.info(f"  New entries added: {new_count}")
+            logger.info(f"✓ Stage 4: Extracted features from {processed_count} videos, skipped {skipped_count} videos")
+            return combined_features_df
         else:
-            logger.warning(f"✓ Stage 4 complete: Features extracted but metadata write failed")
+            logger.error("Failed to write final metadata file!")
+            # Try to return existing metadata
+            if existing_metadata is not None:
+                return existing_metadata
+            return pl.DataFrame()
     else:
-        logger.info(f"✓ Stage 4 complete: No new features to save (all may have been skipped)")
-    
-    logger.info(f"✓ Stage 4: Extracted features from {processed_count} videos, skipped {skipped_count} videos")
-    
-    return features_df
+        logger.info("✓ Stage 4 complete: No new features to save (all may have been skipped)")
+        # Reload final metadata file to return complete dataset
+        metadata_paths_to_check = [
+            output_dir / "features_scaled_metadata.arrow",
+            output_dir / "features_scaled_metadata.parquet",
+            output_dir / "features_scaled_metadata.csv"
+        ]
+        for metadata_path in metadata_paths_to_check:
+            if metadata_path.exists():
+                try:
+                    final_metadata = load_metadata_flexible(str(metadata_path), max_retries=3, retry_delay=0.5)
+                    if final_metadata is not None:
+                        logger.info(f"Stage 4: Returning complete metadata from {metadata_path} ({final_metadata.height} entries)")
+                        return final_metadata
+                except Exception as e:
+                    logger.debug(f"Could not load metadata from {metadata_path}: {e}")
+        
+        # Fallback to existing_metadata if available
+        if existing_metadata is not None:
+            logger.info("Stage 4: Returning existing metadata")
+            return existing_metadata
+        return pl.DataFrame()
 

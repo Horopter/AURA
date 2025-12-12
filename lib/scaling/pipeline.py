@@ -16,7 +16,7 @@ import polars as pl
 import av
 
 from lib.data import load_metadata
-from lib.utils.paths import resolve_video_path, write_metadata_atomic, get_video_metadata_cache_path
+from lib.utils.paths import resolve_video_path, write_metadata_atomic, get_video_metadata_cache_path, load_metadata_flexible
 from lib.utils.memory import aggressive_gc, log_memory_stats, check_oom_error, handle_oom_error, get_memory_stats, safe_execute
 from lib.scaling.methods import (
     scale_video_frames,
@@ -629,48 +629,94 @@ def stage3_scale_videos(
     
     logger.info(f"Stage 3: Processed {total_videos_processed} videos, skipped {skipped_count} videos")
     
-    # Save metadata incrementally (append mode) to avoid overwriting concurrent writes
-    if metadata_rows or total_videos_processed > 0 or skipped_count > 0:
-        try:
-            # Create DataFrame from new metadata
-            new_metadata_df = pl.DataFrame(metadata_rows) if metadata_rows else pl.DataFrame()
+    # Merge new metadata_rows with existing metadata and write final file
+    logger.info("=" * 80)
+    logger.info("Stage 3: Merging new scaled videos with existing metadata...")
+    logger.info("=" * 80)
+    
+    # Create DataFrame from new metadata_rows
+    new_metadata_df = pl.DataFrame(metadata_rows) if metadata_rows else pl.DataFrame()
+    
+    if new_metadata_df.height > 0:
+        logger.info(f"New scaled videos to add: {new_metadata_df.height} entries")
+        
+        # Merge with existing metadata (avoid duplicates)
+        if existing_metadata is not None and existing_metadata.height > 0 and not delete_existing:
+            # Create a set of existing entries to avoid duplicates
+            existing_keys = set()
+            for row in existing_metadata.iter_rows(named=True):
+                key = row.get("video_path", "")
+                existing_keys.add(key)
             
-            if new_metadata_df.height > 0:
-                # Use atomic append write: reads latest metadata, merges, writes back
-                # This ensures concurrent processes see each other's updates
-                metadata_path = output_dir / "scaled_metadata.arrow"
-                success = write_metadata_atomic(new_metadata_df, metadata_path, append=True)
-                
-                if success:
-                    logger.info(f"\n✓ Stage 3 complete: Appended metadata to {metadata_path}")
-                    logger.info(f"✓ Stage 3: Scaled {total_videos_processed} videos, skipped {skipped_count} videos")
-                else:
-                    logger.warning(f"Failed to append metadata atomically, but processing completed")
-                    # Try fallback to Parquet
-                    metadata_path_parquet = output_dir / "scaled_metadata.parquet"
-                    if write_metadata_atomic(new_metadata_df, metadata_path_parquet, append=True):
-                        logger.info(f"Appended metadata to Parquet: {metadata_path_parquet}")
-                
-                # Return merged metadata (read latest from disk)
-                try:
-                    final_metadata = load_metadata_flexible(str(metadata_path), max_retries=3, retry_delay=0.5)
-                    if final_metadata is not None:
-                        return final_metadata
-                    else:
-                        return new_metadata_df
-                except Exception:
-                    return new_metadata_df
+            # Filter out duplicates from new entries
+            new_entries_filtered = []
+            for row in metadata_rows:
+                key = row.get("video_path", "")
+                if key not in existing_keys:
+                    new_entries_filtered.append(row)
+            
+            if new_entries_filtered:
+                new_metadata_df = pl.DataFrame(new_entries_filtered)
+                logger.info(f"After deduplication: {new_metadata_df.height} new entries to add")
+                combined_metadata_df = pl.concat([existing_metadata, new_metadata_df])
             else:
-                logger.warning("Stage 3: No new metadata to save (all videos may have been skipped)")
-                # Return existing metadata if available
+                logger.info("All new entries already exist in metadata, no merge needed")
+                combined_metadata_df = existing_metadata
+        else:
+            combined_metadata_df = new_metadata_df
+        
+        # Write final metadata file (prefer Arrow, fallback to Parquet, then CSV)
+        logger.info(f"Writing final metadata file with {combined_metadata_df.height} total entries...")
+        
+        # Try Arrow first
+        final_metadata_path = output_dir / "scaled_metadata.arrow"
+        success = write_metadata_atomic(combined_metadata_df, final_metadata_path, append=False)
+        
+        if not success:
+            # Fallback to Parquet
+            final_metadata_path = output_dir / "scaled_metadata.parquet"
+            success = write_metadata_atomic(combined_metadata_df, final_metadata_path, append=False)
+            if success:
+                logger.info(f"✓ Saved metadata as Parquet: {final_metadata_path}")
+        else:
+            logger.info(f"✓ Saved metadata as Arrow IPC: {final_metadata_path}")
+        
+        if not success:
+            # Final fallback to CSV
+            final_metadata_path = output_dir / "scaled_metadata.csv"
+            try:
+                combined_metadata_df.write_csv(final_metadata_path)
+                logger.info(f"✓ Saved metadata as CSV: {final_metadata_path}")
+                success = True
+            except Exception as e:
+                logger.error(f"Failed to save metadata as CSV: {e}")
+                success = False
+        
+        # Remove old metadata files if format changed
+        metadata_paths_to_check = [
+            output_dir / "scaled_metadata.arrow",
+            output_dir / "scaled_metadata.parquet",
+            output_dir / "scaled_metadata.csv"
+        ]
+        for old_path in metadata_paths_to_check:
+            if old_path != final_metadata_path and old_path.exists():
                 try:
-                    metadata_path = output_dir / "scaled_metadata.arrow"
-                    final_metadata = load_metadata_flexible(str(metadata_path), max_retries=3, retry_delay=0.5)
-                    return final_metadata if final_metadata is not None else pl.DataFrame()
+                    old_path.unlink()
+                    logger.debug(f"Removed old metadata file: {old_path}")
                 except Exception:
-                    return existing_metadata if existing_metadata is not None else pl.DataFrame()
-        except Exception as e:
-            logger.error(f"Failed to save metadata: {e}")
+                    pass
+        
+        if success:
+            logger.info(f"✓ Final metadata file written: {final_metadata_path}")
+            logger.info(f"  Total entries: {combined_metadata_df.height}")
+            original_count = existing_metadata.height if existing_metadata is not None else 0
+            new_count = len(new_entries_filtered) if 'new_entries_filtered' in locals() and new_entries_filtered else new_metadata_df.height
+            logger.info(f"  Original entries: {original_count}")
+            logger.info(f"  New entries added: {new_count}")
+            logger.info(f"✓ Stage 3: Scaled {total_videos_processed} videos, skipped {skipped_count} videos")
+            return combined_metadata_df
+        else:
+            logger.error("Failed to write final metadata file!")
             # Try to return existing metadata
             try:
                 metadata_path = output_dir / "scaled_metadata.arrow"
@@ -679,12 +725,26 @@ def stage3_scale_videos(
             except Exception:
                 return existing_metadata if existing_metadata is not None else pl.DataFrame()
     else:
-        logger.warning("Stage 3: No videos processed!")
-        # Return existing metadata if available
-        try:
-            metadata_path = output_dir / "scaled_metadata.arrow"
-            final_metadata = load_metadata_flexible(str(metadata_path), max_retries=3, retry_delay=0.5)
-            return final_metadata if final_metadata is not None else pl.DataFrame()
-        except Exception:
-            return existing_metadata if existing_metadata is not None else pl.DataFrame()
+        logger.info("✓ Stage 3 complete: No new scaled videos to save (all may have been skipped)")
+        # Reload final metadata file to return complete dataset
+        metadata_paths_to_check = [
+            output_dir / "scaled_metadata.arrow",
+            output_dir / "scaled_metadata.parquet",
+            output_dir / "scaled_metadata.csv"
+        ]
+        for metadata_path in metadata_paths_to_check:
+            if metadata_path.exists():
+                try:
+                    final_metadata = load_metadata_flexible(str(metadata_path), max_retries=3, retry_delay=0.5)
+                    if final_metadata is not None:
+                        logger.info(f"Stage 3: Returning complete metadata from {metadata_path} ({final_metadata.height} entries)")
+                        return final_metadata
+                except Exception as e:
+                    logger.debug(f"Could not load metadata from {metadata_path}: {e}")
+        
+        # Fallback to existing_metadata if available
+        if existing_metadata is not None:
+            logger.info("Stage 3: Returning existing metadata")
+            return existing_metadata
+        return pl.DataFrame()
 

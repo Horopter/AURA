@@ -124,8 +124,13 @@ Examples:
     parser.add_argument(
         "--resume",
         action="store_true",
-        default=True,
         help="Resume from existing feature files (skip already processed videos, default: True)"
+    )
+    parser.add_argument(
+        "--no-resume",
+        dest="resume",
+        action="store_false",
+        help="Disable resume mode (process all videos, even if features already exist)"
     )
     parser.add_argument(
         "--execution-order",
@@ -137,6 +142,11 @@ Examples:
     )
     
     args = parser.parse_args()
+    
+    # Set resume default to True if neither --resume nor --no-resume was specified
+    resume_provided = '--resume' in sys.argv or '--no-resume' in sys.argv
+    if not resume_provided:
+        args.resume = True
     
     # Input validation
     if not args.project_root or not isinstance(args.project_root, str):

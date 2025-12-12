@@ -237,6 +237,8 @@ mkdir -p "$(dirname "$COMBINED_LOG_FILE")"
 
 cd "$ORIG_DIR" || exit 1
 PYTHON_CMD=$(which python || echo "python")
+# Use unbuffered Python for immediate output
+PYTHON_CMD="$PYTHON_CMD -u"
 
 # Helper function to verify completion
 verify_stage_completion() {

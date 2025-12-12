@@ -9,6 +9,7 @@ Provides functions to:
 
 from __future__ import annotations
 
+import sys
 import logging
 from typing import List, Tuple, Optional, Dict
 import numpy as np
@@ -315,6 +316,8 @@ def load_and_combine_features(
     stage2_loaded = False
     if features_stage2_path and Path(features_stage2_path).exists():
         logger.info("Loading Stage 2 features...")
+        logger.info(f"Stage 2 path: {features_stage2_path}")
+        sys.stdout.flush()
         try:
             path_obj = Path(features_stage2_path)
             if path_obj.suffix == '.arrow':
@@ -323,6 +326,7 @@ def load_and_combine_features(
                 df2 = pl.read_parquet(path_obj)
             else:
                 df2 = pl.read_csv(features_stage2_path)
+            logger.info(f"✓ Loaded Stage 2 metadata: {df2.height} rows, {len(df2.columns)} columns")
             
             # Get feature columns (exclude metadata columns)
             metadata_cols = {'video_path', 'label', 'feature_path'}
@@ -359,17 +363,44 @@ def load_and_combine_features(
                     logger.debug(f"Sample unmatched Stage 2 videos (showing first {len(unmatched_samples)}): {unmatched_samples[:3]}")
                     logger.debug(f"Sample Stage 2 feature paths (showing first 3): {candidate_paths[:3] if candidate_paths else 'None'}")
                 
-                all_features.append(np.array(stage2_features))
-                all_feature_names.extend([f"stage2_{col}" for col in feature_cols])
-                logger.info(f"Loaded {len(feature_cols)} Stage 2 features ({stage2_valid_count}/{len(video_paths)} videos matched)")
-                stage2_loaded = True
+                # Convert to numpy array with defensive error handling
+                logger.info(f"Converting Stage 2 features to numpy array...")
+                sys.stdout.flush()
+                try:
+                    stage2_array = np.array(stage2_features)
+                    logger.info(f"Stage 2 array shape: {stage2_array.shape}, dtype: {stage2_array.dtype}")
+                    all_features.append(stage2_array)
+                    all_feature_names.extend([f"stage2_{col}" for col in feature_cols])
+                    logger.info(f"Loaded {len(feature_cols)} Stage 2 features ({stage2_valid_count}/{len(video_paths)} videos matched)")
+                    stage2_loaded = True
+                except MemoryError as e:
+                    logger.critical(f"Memory error converting Stage 2 features to numpy: {e}")
+                    logger.critical(f"Feature list length: {len(stage2_features)}, Feature count per video: {len(feature_cols)}")
+                    raise
+                except Exception as e:
+                    error_msg = str(e)
+                    logger.error(f"Error converting Stage 2 features to numpy: {e}", exc_info=True)
+                    if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                        logger.critical("CRITICAL: Possible crash during numpy array conversion")
+                    raise
+        except MemoryError as e:
+            logger.critical(f"Memory error loading Stage 2 features from {features_stage2_path}: {e}")
+            raise
         except Exception as e:
+            error_msg = str(e)
             logger.error(f"Error loading Stage 2 features: {e}", exc_info=True)
+            if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                logger.critical("CRITICAL: Possible crash during Stage 2 feature file reading")
+                logger.critical(f"File: {features_stage2_path}")
+                logger.critical("This may indicate corrupted feature file or polars library issue")
+            raise
     
     # Load Stage 4 features
     stage4_loaded = False
     if features_stage4_path and Path(features_stage4_path).exists():
         logger.info("Loading Stage 4 features...")
+        logger.info(f"Stage 4 path: {features_stage4_path}")
+        sys.stdout.flush()
         try:
             path_obj = Path(features_stage4_path)
             if path_obj.suffix == '.arrow':
@@ -378,6 +409,7 @@ def load_and_combine_features(
                 df4 = pl.read_parquet(path_obj)
             else:
                 df4 = pl.read_csv(features_stage4_path)
+            logger.info(f"✓ Loaded Stage 4 metadata: {df4.height} rows, {len(df4.columns)} columns")
             
             # Get feature columns
             metadata_cols = {'video_path', 'label', 'feature_path'}
@@ -414,20 +446,64 @@ def load_and_combine_features(
                     logger.debug(f"Sample unmatched Stage 4 videos (showing first {len(unmatched_samples)}): {unmatched_samples[:3]}")
                     logger.debug(f"Sample Stage 4 feature paths (showing first 3): {candidate_paths[:3] if candidate_paths else 'None'}")
                 
-                all_features.append(np.array(stage4_features))
-                all_feature_names.extend([f"stage4_{col}" for col in feature_cols])
-                logger.info(f"Loaded {len(feature_cols)} Stage 4 features ({stage4_valid_count}/{len(video_paths)} videos matched)")
-                stage4_loaded = True
+                # Convert to numpy array with defensive error handling
+                logger.info(f"Converting Stage 4 features to numpy array...")
+                sys.stdout.flush()
+                try:
+                    stage4_array = np.array(stage4_features)
+                    logger.info(f"Stage 4 array shape: {stage4_array.shape}, dtype: {stage4_array.dtype}")
+                    all_features.append(stage4_array)
+                    all_feature_names.extend([f"stage4_{col}" for col in feature_cols])
+                    logger.info(f"Loaded {len(feature_cols)} Stage 4 features ({stage4_valid_count}/{len(video_paths)} videos matched)")
+                    stage4_loaded = True
+                except MemoryError as e:
+                    logger.critical(f"Memory error converting Stage 4 features to numpy: {e}")
+                    logger.critical(f"Feature list length: {len(stage4_features)}, Feature count per video: {len(feature_cols)}")
+                    raise
+                except Exception as e:
+                    error_msg = str(e)
+                    logger.error(f"Error converting Stage 4 features to numpy: {e}", exc_info=True)
+                    if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                        logger.critical("CRITICAL: Possible crash during numpy array conversion")
+                    raise
+        except MemoryError as e:
+            logger.critical(f"Memory error loading Stage 4 features from {features_stage4_path}: {e}")
+            raise
         except Exception as e:
+            error_msg = str(e)
             logger.error(f"Error loading Stage 4 features: {e}", exc_info=True)
+            if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+                logger.critical("CRITICAL: Possible crash during Stage 4 feature file reading")
+                logger.critical(f"File: {features_stage4_path}")
+                logger.critical("This may indicate corrupted feature file or polars library issue")
+            raise
     
     if not all_features:
         logger.warning("No features loaded!")
         return np.array([]).reshape(len(video_paths), 0), [], None, None
     
-    # Combine features
-    combined_features = np.hstack(all_features)
-    logger.info(f"Combined {len(all_feature_names)} features from {len(all_features)} stages")
+    # Combine features with defensive error handling
+    logger.info(f"Combining {len(all_features)} feature arrays...")
+    logger.info(f"Feature array shapes: {[arr.shape for arr in all_features]}")
+    sys.stdout.flush()
+    
+    try:
+        combined_features = np.hstack(all_features)
+        logger.info(f"Combined {len(all_feature_names)} features from {len(all_features)} stages")
+        logger.info(f"Combined feature matrix shape: {combined_features.shape}, dtype: {combined_features.dtype}")
+        logger.info(f"Combined feature matrix size: {combined_features.nbytes / 1024**2:.2f} MB")
+    except MemoryError as e:
+        logger.critical(f"Memory error during feature combination: {e}")
+        sizes_mb = [f"{arr.nbytes / (1024**2):.2f}" for arr in all_features]
+        logger.critical(f"Feature array sizes: {sizes_mb} MB")
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Failed to combine features: {e}", exc_info=True)
+        if "core dump" in error_msg.lower() or "segmentation fault" in error_msg.lower() or "aborted" in error_msg.lower():
+            logger.critical("CRITICAL: Possible crash during numpy.hstack()")
+            logger.critical("This may indicate corrupted feature arrays or memory issue")
+        raise
     
     # Determine valid video indices based on which stages are loaded
     # If both Stage 2 and Stage 4 are loaded, keep only videos that have BOTH (intersection)
