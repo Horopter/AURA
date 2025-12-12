@@ -1283,7 +1283,6 @@ def stage5_train_models(
                                     pass
                             # Clear GPU cache if using CUDA
                             try:
-                                import torch
                                 if torch.cuda.is_available():
                                     torch.cuda.empty_cache()
                             except Exception:
