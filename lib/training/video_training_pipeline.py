@@ -161,10 +161,38 @@ def train_video_model(
     param_grid = get_hyperparameter_grid(model_type)
     logger.info(f"Hyperparameter search: {len(list(ParameterGrid(param_grid)))} combinations")
     
-    # Combine train and val for hyperparameter search
+    # OPTIMIZATION: Use 20% stratified sample for hyperparameter search (faster)
+    # Final training will use full dataset for robustness
+    from sklearn.model_selection import StratifiedShuffleSplit
+    
+    logger.info("=" * 80)
+    logger.info("HYPERPARAMETER SEARCH: Using 20% stratified sample for efficiency")
+    logger.info("=" * 80)
+    
+    # Combine train and val for sampling
     trainval_df = pl.concat([train_df, val_df])
     
-    # Hyperparameter search
+    # Sample 20% of data for hyperparameter search
+    labels = trainval_df["label"].to_list()
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.8, random_state=42)
+    sample_indices, _ = next(sss.split(trainval_df, labels))
+    
+    # Create 20% sample DataFrame
+    sample_df = trainval_df[sample_indices]
+    logger.info(f"Hyperparameter search sample: {sample_df.height} rows ({100.0 * sample_df.height / trainval_df.height:.1f}% of {trainval_df.height} total)")
+    
+    # Split sample into train/val for hyperparameter search
+    from sklearn.model_selection import train_test_split
+    sample_labels = sample_df["label"].to_list()
+    train_sample_idx, val_sample_idx = train_test_split(
+        range(len(sample_df)), test_size=0.2, random_state=42, stratify=sample_labels
+    )
+    train_sample_df = sample_df[train_sample_idx]
+    val_sample_df = sample_df[val_sample_idx]
+    
+    logger.info(f"  Sample train: {train_sample_df.height}, Sample val: {val_sample_df.height}")
+    
+    # Hyperparameter search on 20% sample
     best_score = -1
     best_params = None
     best_model_state = None
@@ -191,9 +219,9 @@ def train_video_model(
             model = create_model(model_type, model_config)
             model = model.to(device)
             
-            # Create datasets
-            train_dataset = VideoDataset(train_df, project_root, video_config, train=True)
-            val_dataset = VideoDataset(val_df, project_root, video_config, train=False)
+            # Create datasets from 20% sample
+            train_dataset = VideoDataset(train_sample_df, project_root, video_config, train=True)
+            val_dataset = VideoDataset(val_sample_df, project_root, video_config, train=False)
             
             # Create data loaders with memory-optimized settings
             collate_fn = variable_ar_collate if use_variable_ar else None
@@ -369,11 +397,18 @@ def train_video_model(
         del model, train_dataset, val_dataset, train_loader, val_loader
         aggressive_gc(clear_cuda=use_gpu)
     
-    logger.info(f"Best hyperparameters: {best_params} (val_f1: {best_score:.4f})")
+    logger.info(f"Best hyperparameters from 20% sample: {best_params} (val_f1: {best_score:.4f})")
     
-    # Train final model with best params using 5-fold CV on train+val
+    # FINAL TRAINING: Train on full dataset with best hyperparameters
+    logger.info("=" * 80)
+    logger.info("FINAL TRAINING: Using full dataset with best hyperparameters")
+    logger.info("=" * 80)
+    logger.info(f"Full dataset: train={train_df.height}, val={val_df.height}, test={test_df.height}")
+    
+    # Train final model with best params using 5-fold CV on full train+val
+    trainval_df_full = pl.concat([train_df, val_df])
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    labels = trainval_df["label"].to_list()
+    labels = trainval_df_full["label"].to_list()
     unique_labels = sorted(set(labels))
     label_map = {label: idx for idx, label in enumerate(unique_labels)}
     y_trainval = np.array([label_map[label] for label in labels])
@@ -382,11 +417,11 @@ def train_video_model(
     all_val_probs = []
     all_val_labels = []
     
-    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(trainval_df, y_trainval)):
-        logger.info(f"CV Fold {fold_idx + 1}/{n_splits}")
+    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(trainval_df_full, y_trainval)):
+        logger.info(f"CV Fold {fold_idx + 1}/{n_splits} (full dataset)")
         
-        fold_train_df = trainval_df[train_idx]
-        fold_val_df = trainval_df[val_idx]
+        fold_train_df = trainval_df_full[train_idx]
+        fold_val_df = trainval_df_full[val_idx]
         
         # Create model
         from lib.mlops.config import RunConfig
