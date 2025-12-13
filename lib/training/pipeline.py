@@ -664,14 +664,24 @@ def stage5_train_models(
     # Create video config (will be used only for PyTorch models)
     # Always use scaled videos - augmentation done in Stage 1, scaling in Stage 3
     # Handle both old and new VideoConfig versions (some servers may not have use_scaled_videos yet)
-    # For x3d model, use chunked frame loading with adaptive sizing to prevent OOM
-    # Adaptive chunk size starts at 200, reduces on OOM (multiplicative decrease), increases on success (additive increase)
+    # For memory-intensive models (5c+), use chunked frame loading with adaptive sizing to prevent OOM
+    # Adaptive chunk size starts at 30, reduces on OOM (multiplicative decrease), increases on success (additive increase)
+    # Memory-intensive models that need chunked frame loading (5c+ scripts)
+    MEMORY_INTENSIVE_MODELS = [
+        "naive_cnn",           # 5c - processes 1000 frames at full resolution
+        "pretrained_inception", # 5d - large pretrained model
+        "variable_ar_cnn",     # 5e - variable-length videos with many frames
+        "i3d",                 # 5o - 3D CNN
+        "r2plus1d",            # 5p - 3D CNN
+        "x3d",                 # 5q - very memory intensive
+        "slowfast",            # 5r - dual-pathway architecture
+    ]
     use_chunked_loading = False
     chunk_size = None
     for model_type in model_types:
-        if model_type == "x3d":
+        if model_type in MEMORY_INTENSIVE_MODELS:
             use_chunked_loading = True
-            chunk_size = 200  # Initial chunk size (adaptive manager will adjust based on OOM events)
+            chunk_size = 30  # Initial chunk size (reduced from 200 to prevent OOM)
             logger.info(
                 f"Enabling adaptive chunked frame loading for {model_type}: "
                 f"initial_chunk_size={chunk_size}, num_frames={num_frames}. "
@@ -930,7 +940,7 @@ def stage5_train_models(
                         # Use same limits as defined above for consistency
                         MEMORY_INTENSIVE_MODELS_BATCH_LIMITS = {
                             "x3d": 1,  # Very memory intensive
-                            "naive_cnn": 2,  # Processes 1000 frames at full resolution
+                            "naive_cnn": 1,  # Processes 1000 frames at full resolution - must use batch_size=1
                             "variable_ar_cnn": 2,  # Processes variable-length videos with many frames
                             "pretrained_inception": 2,  # Large pretrained model processing many frames
                         }

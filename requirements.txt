@@ -9,6 +9,7 @@ opencv-python>=4.8.0
 av>=10.0.0
 torchcodec>=0.1.0
 pytorchvideo>=0.1.5
+fvcore>=0.1.5  # Required by pytorchvideo for X3D model loading
 
 # Deep learning
 torch>=2.0.0
