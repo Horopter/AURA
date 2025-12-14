@@ -156,29 +156,28 @@ def get_hyperparameter_grid(model_type: str) -> Dict[str, List[Any]]:
             "weight_decay": [1e-4, 1e-3],
             "batch_size": [2]
         },
-        # XGBoost models - MINIMAL GRID SEARCH for fastest results
-        # Reduced to single values for speed (can be expanded later if needed)
-        # Total combinations: 1*1*1*1*1 = 1 (no grid search, just default params)
+        # XGBoost models - Expanded grid search for models 5f-5h
+        # Total combinations: 2*2*2*1*1 = 8 combinations
         "xgboost_pretrained_inception": {
-            "n_estimators": [100],  # Single value for speed (was [100, 200])
-            "max_depth": [5],  # Single value for speed (was [3, 5, 7])
-            "learning_rate": [0.1],  # Single value for speed (was [0.01, 0.1])
-            "subsample": [0.8],  # Single value for speed (was [0.8, 1.0])
-            "colsample_bytree": [0.8]  # Single value for speed (was [0.8, 1.0])
+            "n_estimators": [100, 200],  # 2 values
+            "max_depth": [3, 5],  # 2 values
+            "learning_rate": [0.01, 0.1],  # 2 values
+            "subsample": [0.8],  # 1 value (fixed)
+            "colsample_bytree": [0.8]  # 1 value (fixed)
         },
         "xgboost_i3d": {
-            "n_estimators": [100],  # Single value for speed
-            "max_depth": [5],  # Single value for speed
-            "learning_rate": [0.1],  # Single value for speed
-            "subsample": [0.8],  # Single value for speed
-            "colsample_bytree": [0.8]  # Single value for speed
+            "n_estimators": [100, 200],  # 2 values
+            "max_depth": [3, 5],  # 2 values
+            "learning_rate": [0.01, 0.1],  # 2 values
+            "subsample": [0.8],  # 1 value (fixed)
+            "colsample_bytree": [0.8]  # 1 value (fixed)
         },
         "xgboost_r2plus1d": {
-            "n_estimators": [100],  # Single value for speed
-            "max_depth": [5],  # Single value for speed
-            "learning_rate": [0.1],  # Single value for speed
-            "subsample": [0.8],  # Single value for speed
-            "colsample_bytree": [0.8]  # Single value for speed
+            "n_estimators": [100, 200],  # 2 values
+            "max_depth": [3, 5],  # 2 values
+            "learning_rate": [0.01, 0.1],  # 2 values
+            "subsample": [0.8],  # 1 value (fixed)
+            "colsample_bytree": [0.8]  # 1 value (fixed)
         },
         "xgboost_vit_gru": {
             "n_estimators": [100],  # Single value for speed

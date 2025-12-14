@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import hashlib
 import random
-import csv
 import shutil
 import tempfile
 from pathlib import Path

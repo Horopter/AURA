@@ -25,36 +25,102 @@ class I3DModel(nn.Module):
         """
         super().__init__()
         
+        # I3D is not available in torchvision, use pytorchvideo via PyTorch Hub
+        hub_loaded = False
         try:
-            from torchvision.models.video import i3d_r50, I3D_R50_Weights
-            
+            # PyTorch Hub is the recommended way to load pytorchvideo models
+            import torch.hub
             if pretrained:
-                try:
-                    weights = I3D_R50_Weights.KINETICS400_V1
-                    self.backbone = i3d_r50(weights=weights)
-                except (AttributeError, ValueError):
-                    self.backbone = i3d_r50(pretrained=True)
+                logger.info("Loading I3D R50 from PyTorch Hub (facebookresearch/pytorchvideo)...")
+                self.backbone = torch.hub.load('facebookresearch/pytorchvideo', 'i3d_r50', pretrained=True)
             else:
-                self.backbone = i3d_r50(pretrained=False)
+                self.backbone = torch.hub.load('facebookresearch/pytorchvideo', 'i3d_r50', pretrained=False)
             
             # Replace classification head for binary classification
-            self.backbone.fc = nn.Linear(self.backbone.fc.in_features, 1)
-            self.use_torchvision = True
-            
-        except ImportError:
-            logger.warning("torchvision I3D not available. Using fallback implementation.")
-            # Fallback: use R3D_18 as approximation
-            from torchvision.models.video import r3d_18, R3D_18_Weights
-            if pretrained:
-                try:
-                    weights = R3D_18_Weights.KINETICS400_V1
-                    self.backbone = r3d_18(weights=weights)
-                except (AttributeError, ValueError):
-                    self.backbone = r3d_18(pretrained=True)
+            # pytorchvideo I3D structure uses blocks[6].proj
+            if hasattr(self.backbone, 'blocks'):
+                last_block = self.backbone.blocks[-1]
+                if hasattr(last_block, 'proj'):
+                    in_features = last_block.proj.in_features
+                    last_block.proj = nn.Linear(in_features, 1)
+                else:
+                    # Fallback: add a new head
+                    self.backbone.fc = nn.Linear(2048, 1)
+            elif hasattr(self.backbone, 'fc'):
+                in_features = self.backbone.fc.in_features
+                self.backbone.fc = nn.Linear(in_features, 1)
             else:
-                self.backbone = r3d_18(pretrained=False)
-            self.backbone.fc = nn.Linear(self.backbone.fc.in_features, 1)
-            self.use_torchvision = True
+                # Add a new head if neither exists
+                self.backbone.fc = nn.Linear(2048, 1)
+            
+            self.use_torchvision = False  # PyTorchVideo models may need different input handling
+            self.use_pytorchvideo = True
+            hub_loaded = True
+            logger.info("✓ Loaded I3D from PyTorch Hub (pytorchvideo)")
+        except Exception as hub_error:
+            logger.debug(f"Failed to load I3D from PyTorch Hub: {hub_error}")
+            hub_loaded = False
+        
+        # If PyTorch Hub failed, try pytorchvideo library directly (alternative method)
+        if not hub_loaded:
+            pytorchvideo_loaded = False
+            try:
+                # Try using pytorchvideo's hub module
+                import pytorchvideo.models.hub as pv_hub
+                logger.info("Trying to load I3D from pytorchvideo library...")
+                
+                # pytorchvideo hub provides i3d models
+                if pretrained:
+                    self.backbone = pv_hub.i3d_r50(pretrained=True)
+                else:
+                    self.backbone = pv_hub.i3d_r50(pretrained=False)
+                
+                # Replace classification head
+                if hasattr(self.backbone, 'blocks'):
+                    last_block = self.backbone.blocks[-1]
+                    if hasattr(last_block, 'proj'):
+                        in_features = last_block.proj.in_features
+                        last_block.proj = nn.Linear(in_features, 1)
+                    else:
+                        self.backbone.fc = nn.Linear(2048, 1)
+                elif hasattr(self.backbone, 'fc'):
+                    in_features = self.backbone.fc.in_features
+                    self.backbone.fc = nn.Linear(in_features, 1)
+                else:
+                    self.backbone.fc = nn.Linear(2048, 1)
+                
+                self.use_torchvision = False
+                self.use_pytorchvideo = True
+                pytorchvideo_loaded = True
+                logger.info("✓ Loaded I3D from pytorchvideo library")
+            except Exception as pv_error:
+                logger.debug(f"pytorchvideo library not available or failed: {pv_error}")
+                pytorchvideo_loaded = False
+        
+        # Final fallback: use R3D_18 as approximation (available in torchvision)
+        if not hub_loaded and not pytorchvideo_loaded:
+            logger.warning(
+                "I3D not available from pytorchvideo. Using R3D_18 as fallback. "
+                "Install pytorchvideo for true I3D: pip install pytorchvideo"
+            )
+            try:
+                from torchvision.models.video import r3d_18, R3D_18_Weights
+                if pretrained:
+                    try:
+                        weights = R3D_18_Weights.KINETICS400_V1
+                        self.backbone = r3d_18(weights=weights)
+                    except (AttributeError, ValueError):
+                        self.backbone = r3d_18(pretrained=True)
+                else:
+                    self.backbone = r3d_18(pretrained=False)
+                self.backbone.fc = nn.Linear(self.backbone.fc.in_features, 1)
+                self.use_torchvision = True
+                self.use_pytorchvideo = False
+            except ImportError:
+                raise ImportError(
+                    "I3D requires either pytorchvideo or torchvision. "
+                    "Install pytorchvideo: pip install pytorchvideo"
+                )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

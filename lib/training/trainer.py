@@ -339,7 +339,7 @@ def train_one_epoch(
         try:
             if scaler is not None:
                 try:
-                    with torch.amp.autocast('cuda'):
+                    with torch.amp.autocast(device_type='cuda'):
                         logits = model(clips)
                 except (AttributeError, TypeError):
                     with torch.cuda.amp.autocast():
@@ -510,7 +510,7 @@ def evaluate(
         try:
             if device.startswith("cuda"):
                 try:
-                    with torch.amp.autocast('cuda'):
+                    with torch.amp.autocast(device_type='cuda'):
                         logits = model(clips)
                 except (AttributeError, TypeError):
                     with torch.cuda.amp.autocast():

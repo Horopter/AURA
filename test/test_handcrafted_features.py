@@ -2,7 +2,7 @@
 import pytest
 import numpy as np
 import cv2
-from lib.features.handcrafted_features import (
+from lib.features.handcrafted import (
     extract_noise_residual,
     extract_dct_statistics,
     extract_blur_sharpness,

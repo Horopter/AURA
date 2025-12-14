@@ -124,12 +124,16 @@ def filter_existing_videos(
     By default, checks file existence and corruption. Set check_frames=True to
     also validate that videos have at least 1 frame.
     
+    Frame check can be skipped by creating a file named 'skip_frame_check.txt' in the data folder.
+    This is useful when you've already validated videos and want to speed up subsequent runs.
+    
     Uses centralized path resolution from video_paths module.
     
     Args:
         df: Polars DataFrame with 'video_path' column
         project_root: Root directory for resolving relative paths
-        check_frames: If True, also check that videos have frames (slower, memory-intensive)
+        check_frames: If True, also check that videos have frames (slower, memory-intensive).
+                     Will be automatically disabled if 'data/skip_frame_check.txt' exists.
         check_corruption: If True, check for corrupted videos (moov atom errors, etc.) (default: True)
         
     Returns:
@@ -312,6 +316,12 @@ def filter_existing_videos(
             logger.info(f"✓ All {filtered.height} videos are valid (no corruption detected)")
     
     # Third pass: optionally check for frames (slower, but prevents runtime errors)
+    # Skip frame check if skip_frame_check.txt exists in data folder
+    skip_frame_check_file = Path(project_root) / "data" / "skip_frame_check.txt"
+    if check_frames and skip_frame_check_file.exists():
+        logger.info(f"Found {skip_frame_check_file} - skipping frame check as requested.")
+        check_frames = False
+    
     if check_frames and filtered.height > 0:
         from lib.models import _read_video_wrapper
         import gc
@@ -354,6 +364,15 @@ def filter_existing_videos(
         else:
             logger.info(f"✓ All {filtered.height} videos have frames")
         logger.info("Frame check complete.")
+        
+        # Create skip file to remember that frame check was completed
+        # This allows future runs to skip the time-consuming frame check
+        try:
+            skip_frame_check_file.parent.mkdir(parents=True, exist_ok=True)
+            skip_frame_check_file.touch()
+            logger.info(f"Created {skip_frame_check_file} to skip frame check in future runs.")
+        except (OSError, IOError, PermissionError) as e:
+            logger.warning(f"Could not create skip_frame_check.txt file: {e}. Frame check will run again next time.")
     
     # Log summary
     filtered_count = df.height - filtered.height

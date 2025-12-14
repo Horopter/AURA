@@ -178,12 +178,12 @@ def get_predictions_from_model(
                 clips = clips.to(device)
                 
                 if device.startswith("cuda"):
-                    try:
-                        with torch.amp.autocast('cuda'):
-                            logits = model(clips)
-                    except (AttributeError, TypeError):
-                        with torch.cuda.amp.autocast():
-                            logits = model(clips)
+                        try:
+                            with torch.amp.autocast(device_type='cuda'):
+                                logits = model(clips)
+                        except (AttributeError, TypeError):
+                            with torch.cuda.amp.autocast():
+                                logits = model(clips)
                 else:
                     logits = model(clips)
                 

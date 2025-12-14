@@ -10,12 +10,9 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import importlib.util
-from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any, Union
 import numpy as np
-import polars as pl
 import torch
 from torch.utils.data import DataLoader
 
@@ -919,7 +916,6 @@ def stage5_train_models(
         
         # Get hyperparameter grid for grid search
         from .grid_search import get_hyperparameter_grid, generate_parameter_combinations, select_best_hyperparameters
-        from .visualization import generate_all_plots
         
         param_grid = get_hyperparameter_grid(model_type)
         param_combinations = generate_parameter_combinations(param_grid)
