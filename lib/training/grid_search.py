@@ -52,67 +52,67 @@ def get_hyperparameter_grid(model_type: str) -> Dict[str, List[Any]]:
             "C": [0.1, 1.0, 10.0],
             "kernel": ["linear", "rbf"]
         },
-        # PyTorch models
-        "naive_cnn": {
-            "learning_rate": [1e-4, 5e-4, 1e-3],  # Reduced from 4 to 3 values (3*3*2*2 = 36 combinations)
-            "weight_decay": [1e-5, 1e-4, 1e-3],
+        # PyTorch models - Models 5c-5u: Single hyperparameter combination each
+        "naive_cnn": {  # 5c
+            "learning_rate": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
             "batch_size": [1],  # Capped at 1 to prevent OOM (processes 1000 frames at full resolution)
-            "num_epochs": [20, 30]  # Reduced from 3 to 2 values
+            "num_epochs": [25]  # Single value
         },
-        "pretrained_inception": {
-            "learning_rate": [5e-5, 1e-4, 5e-4],  # Reduced from 4 to 3 values (3*2*2*2*2 = 48 combinations)
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
+        "pretrained_inception": {  # 5d
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
             "batch_size": [2]  # Capped at 2 to prevent OOM (large pretrained model processing many frames)
         },
-        "variable_ar_cnn": {
-            "learning_rate": [1e-4, 5e-4],  # Reduced from 3 to 2 values (2*2*2 = 8 combinations)
-            "weight_decay": [1e-4, 1e-3],
+        "variable_ar_cnn": {  # 5e
+            "learning_rate": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
             "batch_size": [2]  # Capped at 2 to prevent OOM (processes variable-length videos with many frames)
         },
-        "vit_gru": {
-            "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values (2*2*2*2*2 = 32 combinations)
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
-            "batch_size": [2, 4]
+        "vit_gru": {  # 5k
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
+            "batch_size": [2]  # Single value
         },
-        "vit_transformer": {
-            "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
-            "batch_size": [2, 4]
+        "vit_transformer": {  # 5l
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
+            "batch_size": [2]  # Single value
         },
-        "slowfast": {
-            "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
-            # batch_size removed - x3d requires batch_size=1 to prevent OOM (enforced in pipeline.py)
+        "slowfast": {  # 5r
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
+            # batch_size removed - slowfast requires batch_size=1 to prevent OOM (enforced in pipeline.py)
             # gradient_accumulation_steps will be adjusted to maintain effective batch size
         },
-        "x3d": {
-            "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
-            "batch_size": [2, 4]
+        "x3d": {  # 5q
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
+            "batch_size": [2]  # Single value
         },
-        "i3d": {
-            "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
-            "batch_size": [2]
+        "i3d": {  # 5o
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
+            "batch_size": [2]  # Single value
         },
-        "r2plus1d": {
-            "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
-            "batch_size": [2]
+        "r2plus1d": {  # 5p
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
+            "batch_size": [2]  # Single value
         },
         "r3d_18": {
             "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values
@@ -121,63 +121,62 @@ def get_hyperparameter_grid(model_type: str) -> Dict[str, List[Any]]:
             "weight_decay": [1e-4, 1e-3],
             "batch_size": [2, 4]
         },
-        "timesformer": {
-            "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values (2*2*2*2*2 = 32 combinations)
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
-            "batch_size": [2, 4]
+        "timesformer": {  # 5m
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
+            "batch_size": [2]  # Single value
         },
-        "vivit": {
-            "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
-            "batch_size": [2, 4]
+        "vivit": {  # 5n
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
+            "batch_size": [2]  # Single value
         },
-        "two_stream": {
-            "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values (2*2*2*2*1 = 16 combinations)
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
-            "batch_size": [2]
+        "two_stream": {  # 5u
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
+            "batch_size": [2]  # Single value
         },
-        "slowfast_attention": {
-            "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
-            "batch_size": [2]
+        "slowfast_attention": {  # 5s
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
+            "batch_size": [2]  # Single value
         },
-        "slowfast_multiscale": {
-            "learning_rate": [5e-5, 1e-4],  # Reduced from 3 to 2 values (2*2*2*2*2 = 32 combinations)
-            "backbone_lr": [1e-6, 5e-6],
-            "head_lr": [1e-4, 5e-4],
-            "weight_decay": [1e-4, 1e-3],
-            "batch_size": [2]
+        "slowfast_multiscale": {  # 5t
+            "learning_rate": [1e-4],  # Single value
+            "backbone_lr": [5e-6],  # Single value
+            "head_lr": [5e-4],  # Single value
+            "weight_decay": [1e-4],  # Single value
+            "batch_size": [2]  # Single value
         },
-        # XGBoost models - Expanded grid search for models 5f-5h
-        # Total combinations: 2*2*2*1*1 = 8 combinations
-        "xgboost_pretrained_inception": {
-            "n_estimators": [100, 200],  # 2 values
-            "max_depth": [3, 5],  # 2 values
-            "learning_rate": [0.01, 0.1],  # 2 values
-            "subsample": [0.8],  # 1 value (fixed)
-            "colsample_bytree": [0.8]  # 1 value (fixed)
+        # XGBoost models - Models 5f-5j: Single hyperparameter combination each
+        "xgboost_pretrained_inception": {  # 5f
+            "n_estimators": [100],  # Single value
+            "max_depth": [5],  # Single value
+            "learning_rate": [0.1],  # Single value
+            "subsample": [0.8],  # Single value
+            "colsample_bytree": [0.8]  # Single value
         },
-        "xgboost_i3d": {
-            "n_estimators": [100, 200],  # 2 values
-            "max_depth": [3, 5],  # 2 values
-            "learning_rate": [0.01, 0.1],  # 2 values
-            "subsample": [0.8],  # 1 value (fixed)
-            "colsample_bytree": [0.8]  # 1 value (fixed)
+        "xgboost_i3d": {  # 5g
+            "n_estimators": [100],  # Single value
+            "max_depth": [5],  # Single value
+            "learning_rate": [0.1],  # Single value
+            "subsample": [0.8],  # Single value
+            "colsample_bytree": [0.8]  # Single value
         },
-        "xgboost_r2plus1d": {
-            "n_estimators": [100, 200],  # 2 values
-            "max_depth": [3, 5],  # 2 values
-            "learning_rate": [0.01, 0.1],  # 2 values
-            "subsample": [0.8],  # 1 value (fixed)
-            "colsample_bytree": [0.8]  # 1 value (fixed)
+        "xgboost_r2plus1d": {  # 5h
+            "n_estimators": [100],  # Single value
+            "max_depth": [5],  # Single value
+            "learning_rate": [0.1],  # Single value
+            "subsample": [0.8],  # Single value
+            "colsample_bytree": [0.8]  # Single value
         },
         "xgboost_vit_gru": {
             "n_estimators": [100],  # Single value for speed

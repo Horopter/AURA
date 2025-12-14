@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Union
@@ -41,9 +42,9 @@ def _flush_logs():
                 handler.stream.flush()
             elif hasattr(handler, 'flush'):
                 handler.flush()
-    except Exception:
+    except (OSError, AttributeError, RuntimeError) as e:
         # Ignore errors during flush (non-critical)
-        pass
+        logger.debug(f"Error flushing logs (non-critical): {e}")
 
 
 # Constants for model type classification
@@ -56,18 +57,20 @@ BASELINE_MODELS = {
     "svm_stage2_stage4"
 }
 
-STAGE2_MODELS = {
-    "logistic_regression",
-    "logistic_regression_stage2",
-    "logistic_regression_stage2_stage4",
-    "svm",
-    "svm_stage2",
-    "svm_stage2_stage4"
-}
+# STAGE2_MODELS is identical to BASELINE_MODELS - use BASELINE_MODELS instead
+STAGE2_MODELS = BASELINE_MODELS
 
 STAGE4_MODELS = {
     "logistic_regression_stage2_stage4",
     "svm_stage2_stage4"
+}
+
+# Memory-intensive models and their batch size limits
+MEMORY_INTENSIVE_MODELS_BATCH_LIMITS = {
+    "x3d": 1,  # Very memory intensive
+    "naive_cnn": 1,  # Processes 1000 frames at full resolution - must use batch_size=1
+    "variable_ar_cnn": 2,  # Processes variable-length videos with many frames
+    "pretrained_inception": 2,  # Large pretrained model processing many frames
 }
 
 # Model file extensions to copy
@@ -86,8 +89,6 @@ def _copy_model_files(source_dir: Path, dest_dir: Path, model_name: str = "") ->
     Raises:
         OSError: If copying fails
     """
-    import shutil
-    
     if not source_dir.exists():
         logger.warning(f"Source directory does not exist: {source_dir}")
         return
@@ -485,7 +486,6 @@ def stage5_train_models(
         Dictionary of training results
     """
     # CRITICAL: Set PyTorch memory optimizations at the very start (before any model operations)
-    import os
     if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         logger.info("Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True at pipeline start")
@@ -531,8 +531,6 @@ def stage5_train_models(
         raise ValueError(f"Invalid project_root path: {project_root}") from e
     
     project_root_str = str(project_root_path)
-    # Keep original string for backward compatibility in function calls
-    project_root_str_orig = project_root_str
     
     # Ensure lib/models directory exists (create minimal stub if missing)
     try:
@@ -771,10 +769,14 @@ def stage5_train_models(
         )
     
     try:
-        # Try with use_scaled_videos, chunk_size, and frame_cache options (newer version)
+        # Try with use_scaled_videos, fixed_size, chunk_size, and frame_cache options (newer version)
+        # CRITICAL: Set fixed_size=256 for consistent input dimensions
+        # This ensures all models get consistent input size, even when using scaled videos
+        # VideoDataset will resize to fixed_size if set, even when use_scaled_videos=True
         if use_chunked_loading and chunk_size is not None:
             video_config = VideoConfig(
                 num_frames=num_frames,
+                fixed_size=256,  # CRITICAL: Ensure consistent input size (matches scaled video dimensions)
                 use_scaled_videos=True,  # Stage 5 only trains - all preprocessing done in earlier stages
                 chunk_size=chunk_size,  # Chunked loading for OOM prevention
                 use_frame_cache=use_frame_cache,  # Enable disk-based frame caching
@@ -783,6 +785,7 @@ def stage5_train_models(
         else:
             video_config = VideoConfig(
                 num_frames=num_frames,
+                fixed_size=256,  # CRITICAL: Ensure consistent input size (matches scaled video dimensions)
                 use_scaled_videos=True,  # Stage 5 only trains - all preprocessing done in earlier stages
                 use_frame_cache=use_frame_cache,  # Enable disk-based frame caching
                 frame_cache_dir=frame_cache_dir if use_frame_cache else None  # Cache directory
@@ -790,14 +793,16 @@ def stage5_train_models(
     except TypeError:
         # Fallback: server version doesn't support these parameters
         logger.warning(
-            "VideoConfig on server doesn't support 'use_scaled_videos', 'chunk_size', or frame_cache parameters. "
-            "Using default VideoConfig and setting use_scaled_videos=True and frame_cache manually (videos should already be scaled from Stage 3)."
+            "VideoConfig on server doesn't support 'use_scaled_videos', 'fixed_size', 'chunk_size', or frame_cache parameters. "
+            "Using default VideoConfig and setting use_scaled_videos=True, fixed_size=256, and frame_cache manually (videos should already be scaled from Stage 3)."
         )
         video_config = VideoConfig(num_frames=num_frames)
+        # CRITICAL: Set fixed_size=256 for consistent input dimensions
+        video_config.fixed_size = 256
         # CRITICAL: Set use_scaled_videos=True even if constructor doesn't support it
         # Stage 5 ALWAYS uses scaled videos from Stage 3
         video_config.use_scaled_videos = True
-        logger.info("Manually set use_scaled_videos=True on VideoConfig (server version fallback)")
+        logger.info("Manually set fixed_size=256, use_scaled_videos=True on VideoConfig (server version fallback)")
         # CRITICAL: Set frame_cache parameters even if constructor doesn't support them
         # Frame caching is enabled by default to speed up training
         if use_frame_cache:
@@ -815,6 +820,16 @@ def stage5_train_models(
         )
         video_config.use_scaled_videos = True
         logger.info("Forced use_scaled_videos=True on VideoConfig (Stage 5 requirement)")
+    
+    # CRITICAL: Verify fixed_size is set to 256 for consistent input dimensions
+    # This ensures all models get consistent input size, even when using scaled videos
+    if getattr(video_config, 'fixed_size', None) != 256:
+        logger.warning(
+            f"CRITICAL: fixed_size is not 256 in VideoConfig (got {getattr(video_config, 'fixed_size', None)}). "
+            f"Setting fixed_size=256 for consistent input dimensions."
+        )
+        video_config.fixed_size = 256
+        logger.info("Forced fixed_size=256 on VideoConfig (for consistent input dimensions)")
     
     # CRITICAL: Override num_frames to 500 for small-chunk models (5c-5l) to prevent OOM
     # These models process many frames at full resolution and need to limit to 500 frames max
@@ -867,7 +882,6 @@ def stage5_train_models(
             model_output_dir = output_dir / model_type
             if model_output_dir.exists():
                 try:
-                    import shutil
                     shutil.rmtree(model_output_dir)
                     deleted_count += 1
                     logger.info(f"Deleted existing results for {model_type}")
@@ -982,13 +996,6 @@ def stage5_train_models(
             # Update model_config with current hyperparameters
             current_config = model_config.copy()
             # Filter batch_size from params for memory-intensive models (will be capped later)
-            # Define memory-intensive models and their batch size limits (shared constant)
-            MEMORY_INTENSIVE_MODELS_BATCH_LIMITS = {
-                "x3d": 1,  # Very memory intensive
-                "naive_cnn": 1,  # Processes 1000 frames at full resolution - must use batch_size=1
-                "variable_ar_cnn": 2,  # Processes variable-length videos with many frames
-                "pretrained_inception": 2,  # Large pretrained model processing many frames
-            }
             params_to_apply = params.copy()
             if model_type in MEMORY_INTENSIVE_MODELS_BATCH_LIMITS and "batch_size" in params_to_apply:
                 max_batch = MEMORY_INTENSIVE_MODELS_BATCH_LIMITS[model_type]
@@ -1012,7 +1019,6 @@ def stage5_train_models(
                 fold_output_dir = model_output_dir / f"fold_{fold_idx + 1}"
                 if delete_existing and fold_output_dir.exists():
                     try:
-                        import shutil
                         shutil.rmtree(fold_output_dir)
                         logger.info(f"Deleted existing hyperparameter search fold {fold_idx + 1} directory (clean mode)")
                         _flush_logs()
@@ -1065,12 +1071,12 @@ def stage5_train_models(
                         ) from e
                         train_dataset = VideoDataset(
                         train_df,
-                        project_root=project_root_str_orig,
+                        project_root=project_root_str,
                         config=video_config,
                         )
                         val_dataset = VideoDataset(
                         val_df,
-                        project_root=project_root_str_orig,
+                        project_root=project_root_str,
                         config=video_config,
                         )
                     
@@ -1085,13 +1091,6 @@ def stage5_train_models(
                         
                         # CRITICAL: Force smaller batch sizes for memory-intensive models to prevent OOM
                         # These models process many frames (1000) at high resolution, requiring conservative batch sizes
-                        # Use same limits as defined above for consistency
-                        MEMORY_INTENSIVE_MODELS_BATCH_LIMITS = {
-                            "x3d": 1,  # Very memory intensive
-                            "naive_cnn": 1,  # Processes 1000 frames at full resolution - must use batch_size=1
-                            "variable_ar_cnn": 2,  # Processes variable-length videos with many frames
-                            "pretrained_inception": 2,  # Large pretrained model processing many frames
-                        }
                         
                         if model_type in MEMORY_INTENSIVE_MODELS_BATCH_LIMITS:
                             max_batch_size = MEMORY_INTENSIVE_MODELS_BATCH_LIMITS[model_type]
@@ -1606,10 +1605,10 @@ def stage5_train_models(
                             model = create_model(model_type, xgb_config)
                             
                             # Train XGBoost (handles feature extraction internally)
-                            model.fit(train_df, project_root=project_root_str_orig)
+                            model.fit(train_df, project_root=project_root_str)
                             
                             # Evaluate on validation set
-                            val_probs = model.predict(val_df, project_root=project_root_str_orig)
+                            val_probs = model.predict(val_df, project_root=project_root_str)
                             val_preds = np.argmax(val_probs, axis=1)
                             val_labels = val_df["label"].to_list()
                             label_map = {label: idx for idx, label in enumerate(sorted(set(val_labels)))}
@@ -1760,7 +1759,7 @@ def stage5_train_models(
                             _flush_logs()
                             
                             try:
-                                model.fit(train_df, project_root=project_root_str_orig)
+                                model.fit(train_df, project_root=project_root_str)
                                 logger.info(f"Model.fit() completed successfully for fold {fold_idx + 1}")
                                 _flush_logs()
                             except MemoryError as e:
@@ -1780,7 +1779,7 @@ def stage5_train_models(
                             _flush_logs()
                             
                             try:
-                                val_probs = model.predict(val_df, project_root=project_root_str_orig)
+                                val_probs = model.predict(val_df, project_root=project_root_str)
                                 logger.info(f"Model.predict() completed successfully for fold {fold_idx + 1}")
                                 _flush_logs()
                             except MemoryError as e:
@@ -1964,7 +1963,6 @@ def stage5_train_models(
             fold_output_dir = model_output_dir / f"fold_{fold_idx + 1}"
             if delete_existing and fold_output_dir.exists():
                 try:
-                    import shutil
                     shutil.rmtree(fold_output_dir)
                     logger.info(f"Deleted existing final training fold {fold_idx + 1} directory (clean mode)")
                     _flush_logs()
@@ -2003,8 +2001,8 @@ def stage5_train_models(
                     from lib.models import VideoDataset
                     from lib.models.video import variable_ar_collate
                     
-                    train_dataset = VideoDataset(train_df, project_root=project_root_str_orig, config=video_config)
-                    val_dataset = VideoDataset(val_df, project_root=project_root_str_orig, config=video_config)
+                    train_dataset = VideoDataset(train_df, project_root=project_root_str, config=video_config)
+                    val_dataset = VideoDataset(val_df, project_root=project_root_str, config=video_config)
                     
                     use_cuda = torch.cuda.is_available()
                     num_workers = final_config.get("num_workers", model_config.get("num_workers", 0))
@@ -2013,13 +2011,6 @@ def stage5_train_models(
                     
                     # CRITICAL: Force smaller batch sizes for memory-intensive models to prevent OOM
                     # These models process many frames (1000) at high resolution, requiring conservative batch sizes
-                    # Use same limits as defined above for consistency
-                    MEMORY_INTENSIVE_MODELS_BATCH_LIMITS = {
-                        "x3d": 1,  # Very memory intensive
-                        "naive_cnn": 1,  # Processes 1000 frames at full resolution - must use batch_size=1
-                        "variable_ar_cnn": 2,  # Processes variable-length videos with many frames
-                        "pretrained_inception": 2,  # Large pretrained model processing many frames
-                    }
                     
                     if model_type in MEMORY_INTENSIVE_MODELS_BATCH_LIMITS:
                         max_batch_size = MEMORY_INTENSIVE_MODELS_BATCH_LIMITS[model_type]
@@ -2210,8 +2201,8 @@ def stage5_train_models(
                         xgb_config.update(best_params)
                     model = create_model(model_type, xgb_config)
                     
-                    model.fit(train_df, project_root=project_root_str_orig)
-                    val_probs = model.predict(val_df, project_root=project_root_str_orig)
+                    model.fit(train_df, project_root=project_root_str)
+                    val_probs = model.predict(val_df, project_root=project_root_str)
                     val_preds = np.argmax(val_probs, axis=1)
                     val_labels = val_df["label"].to_list()
                     label_map = {label: idx for idx, label in enumerate(sorted(set(val_labels)))}
@@ -2289,8 +2280,8 @@ def stage5_train_models(
                             baseline_config["features_stage4_path"] = None
                     
                     model = create_model(model_type, baseline_config)
-                    model.fit(train_df, project_root=project_root_str_orig)
-                    val_probs = model.predict(val_df, project_root=project_root_str_orig)
+                    model.fit(train_df, project_root=project_root_str)
+                    val_probs = model.predict(val_df, project_root=project_root_str)
                     val_preds = np.argmax(val_probs, axis=1)
                     val_labels = val_df["label"].to_list()
                     label_map = {label: idx for idx, label in enumerate(sorted(set(val_labels)))}
@@ -2451,7 +2442,7 @@ def stage5_train_models(
             from .ensemble import train_ensemble_model
             
             ensemble_results = train_ensemble_model(
-                project_root=project_root_str_orig,
+                project_root=project_root_str,
                 scaled_metadata_path=scaled_metadata_path,
                 base_model_types=model_types,
                 base_models_dir=str(output_dir),

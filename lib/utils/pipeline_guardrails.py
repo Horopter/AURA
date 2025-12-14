@@ -67,7 +67,7 @@ class PipelineGuardrails:
                     min_rows=1
                 )
                 if is_valid:
-                    info['stage1_rows'] = df.height if df else 0
+                    info['stage1_rows'] = df.height if df is not None else 0
                     info['stage1_metadata_path'] = str(metadata_path)
                     metadata_found = True
                     break
@@ -106,7 +106,7 @@ class PipelineGuardrails:
                     min_rows=1
                 )
                 if is_valid:
-                    info['stage2_rows'] = df.height if df else 0
+                    info['stage2_rows'] = df.height if df is not None else 0
                     info['stage2_metadata_path'] = str(metadata_path)
                     
                     # Check feature count

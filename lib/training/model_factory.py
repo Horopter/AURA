@@ -567,8 +567,9 @@ def download_pretrained_models(model_types: List[str]) -> Dict[str, bool]:
                     results[model_type] = False
             
             elif model_type == "slowfast":
-                # SlowFast uses torchvision, but has fallback to r3d_18 pretrained weights
+                # SlowFast requires actual SlowFast model (no fallback)
                 try:
+                    # Try torchvision first
                     from torchvision.models.video import slowfast_r50, SlowFast_R50_Weights
                     try:
                         weights = SlowFast_R50_Weights.KINETICS400_V1
@@ -578,62 +579,86 @@ def download_pretrained_models(model_types: List[str]) -> Dict[str, bool]:
                     del model
                     torch.cuda.empty_cache() if torch.cuda.is_available() else None
                     results[model_type] = True
-                    logger.info("✓ Downloaded/verified SlowFast pretrained weights")
+                    logger.info("✓ Downloaded/verified SlowFast pretrained weights (torchvision)")
                 except ImportError:
-                    # torchvision doesn't have SlowFast - verify r3d_18 is available as fallback
+                    # Try PyTorch Hub (pytorchvideo)
                     try:
-                        from torchvision.models.video import r3d_18, R3D_18_Weights
-                        try:
-                            weights = R3D_18_Weights.KINETICS400_V1
-                            model = r3d_18(weights=weights)
-                        except (AttributeError, ValueError):
-                            model = r3d_18(pretrained=True)
+                        import torch.hub
+                        model = torch.hub.load('facebookresearch/pytorchvideo', 'slowfast_r50', pretrained=True)
                         del model
                         torch.cuda.empty_cache() if torch.cuda.is_available() else None
                         results[model_type] = True
-                        logger.info("✓ Verified r3d_18 pretrained weights (will be used as SlowFast backbone)")
+                        logger.info("✓ Downloaded/verified SlowFast pretrained weights (PyTorch Hub)")
                     except Exception as e:
-                        logger.warning("⚠ No pretrained weights available for SlowFast: %s", e)
+                        logger.error("✗ Failed to download SlowFast weights: %s", e)
+                        logger.error("  SlowFast requires either torchvision or pytorchvideo. No fallback available.")
                         results[model_type] = False
                 except Exception as e:
                     logger.error("✗ Failed to download SlowFast weights: %s", e)
                     results[model_type] = False
-            
+
             elif model_type == "x3d":
-                # X3D uses torchvision, but has fallback to r3d_18 pretrained weights
+                # X3D requires actual X3D model (no fallback)
                 try:
-                    from torchvision.models.video import x3d_m, X3D_M_Weights
-                    try:
-                        weights = X3D_M_Weights.KINETICS400_V1
-                        model = x3d_m(weights=weights)
-                    except (AttributeError, ValueError):
-                        model = x3d_m(pretrained=True)
+                    # Try PyTorchVideo first (recommended)
+                    import torch.hub
+                    model = torch.hub.load('facebookresearch/pytorchvideo', 'x3d_m', pretrained=True)
                     del model
                     torch.cuda.empty_cache() if torch.cuda.is_available() else None
                     results[model_type] = True
-                    logger.info("✓ Downloaded/verified X3D pretrained weights")
-                except ImportError:
-                    # torchvision doesn't have X3D - verify r3d_18 is available as fallback
+                    logger.info("✓ Downloaded/verified X3D pretrained weights (PyTorchVideo)")
+                except Exception as hub_error:
+                    # Try torchvision
                     try:
-                        from torchvision.models.video import r3d_18, R3D_18_Weights
+                        from torchvision.models.video import x3d_m, X3D_M_Weights
                         try:
-                            weights = R3D_18_Weights.KINETICS400_V1
-                            model = r3d_18(weights=weights)
+                            weights = X3D_M_Weights.KINETICS400_V1
+                            model = x3d_m(weights=weights)
                         except (AttributeError, ValueError):
-                            model = r3d_18(pretrained=True)
+                            model = x3d_m(pretrained=True)
                         del model
                         torch.cuda.empty_cache() if torch.cuda.is_available() else None
                         results[model_type] = True
-                        logger.info("✓ Verified r3d_18 pretrained weights (will be used as X3D backbone)")
+                        logger.info("✓ Downloaded/verified X3D pretrained weights (torchvision)")
                     except Exception as e:
-                        logger.warning("⚠ No pretrained weights available for X3D: %s", e)
+                        logger.error("✗ Failed to download X3D weights: %s", e)
+                        logger.error("  X3D requires either pytorchvideo or torchvision. No fallback available.")
                         results[model_type] = False
+            
+            elif model_type == "i3d":
+                # I3D requires PyTorchVideo (no fallback)
+                try:
+                    import torch.hub
+                    model = torch.hub.load('facebookresearch/pytorchvideo', 'i3d_r50', pretrained=True)
+                    del model
+                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                    results[model_type] = True
+                    logger.info("✓ Downloaded/verified I3D pretrained weights (PyTorchVideo)")
                 except Exception as e:
-                    logger.error("✗ Failed to download X3D weights: %s", e)
+                    logger.error("✗ Failed to download I3D weights: %s", e)
+                    logger.error("  I3D requires pytorchvideo. Install with: pip install pytorchvideo")
+                    results[model_type] = False
+            
+            elif model_type == "r2plus1d":
+                # R(2+1)D requires torchvision (no fallback)
+                try:
+                    from torchvision.models.video import r2plus1d_18, R2Plus1D_18_Weights
+                    try:
+                        weights = R2Plus1D_18_Weights.KINETICS400_V1
+                        model = r2plus1d_18(weights=weights)
+                    except (AttributeError, ValueError):
+                        model = r2plus1d_18(pretrained=True)
+                    del model
+                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                    results[model_type] = True
+                    logger.info("✓ Downloaded/verified R(2+1)D pretrained weights (torchvision)")
+                except Exception as e:
+                    logger.error("✗ Failed to download R(2+1)D weights: %s", e)
+                    logger.error("  R(2+1)D requires torchvision with video model support. No fallback available.")
                     results[model_type] = False
             
             elif model_type == "pretrained_inception":
-                # PretrainedInceptionVideoModel uses torchvision r3d_18
+                # PretrainedInceptionVideoModel uses torchvision r3d_18 (intentional - it's a pretrained backbone)
                 try:
                     from torchvision.models.video import r3d_18, R3D_18_Weights
                     try:
@@ -644,9 +669,49 @@ def download_pretrained_models(model_types: List[str]) -> Dict[str, bool]:
                     del model
                     torch.cuda.empty_cache() if torch.cuda.is_available() else None
                     results[model_type] = True
-                    logger.info("✓ Downloaded/verified R3D_18 pretrained weights")
+                    logger.info("✓ Downloaded/verified R3D_18 pretrained weights (used as PretrainedInceptionVideoModel backbone)")
                 except Exception as e:
                     logger.error("✗ Failed to download R3D_18 weights: %s", e)
+                    results[model_type] = False
+            
+            elif model_type in ["timesformer", "vivit"]:
+                # TimeSformer and ViViT use timm ViT as backbone
+                try:
+                    import timm
+                    model = timm.create_model(
+                        'vit_base_patch16_224',
+                        pretrained=True,
+                        num_classes=0,
+                        global_pool='',
+                        img_size=256
+                    )
+                    del model
+                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                    results[model_type] = True
+                    logger.info("✓ Downloaded/verified ViT pretrained weights for %s (timm)", model_type)
+                except Exception as e:
+                    logger.error("✗ Failed to download ViT weights for %s: %s", model_type, e)
+                    results[model_type] = False
+            
+            elif model_type == "two_stream":
+                # TwoStream uses ResNet or ViT backbones
+                try:
+                    import torchvision.models as models
+                    # Check ResNet availability
+                    model = models.resnet18(pretrained=True)
+                    del model
+                    # Check ViT availability
+                    try:
+                        import timm
+                        model = timm.create_model('vit_base_patch16_224', pretrained=True, img_size=256)
+                        del model
+                    except ImportError:
+                        logger.warning("timm not available for TwoStream ViT backbone, ResNet will be used")
+                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                    results[model_type] = True
+                    logger.info("✓ Downloaded/verified TwoStream backbone weights")
+                except Exception as e:
+                    logger.error("✗ Failed to download TwoStream backbone weights: %s", e)
                     results[model_type] = False
             
             else:

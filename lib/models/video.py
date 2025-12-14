@@ -543,17 +543,33 @@ class VideoDataset(Dataset):
         use_scaled_videos = getattr(self.config, 'use_scaled_videos', False)
         
         if use_scaled_videos:
-            # Scaled videos are already processed in Stage 3 - only apply normalization
-            # No resizing, no augmentation (augmentation done in Stage 1, scaling done in Stage 3)
-            # CRITICAL: Scaled videos should be ~256px on one side - we should NOT resize them
-            logger.debug("Using scaled videos: skipping all transforms, applying normalization only")
-            self._frame_transform = transforms.Compose([
-                transforms.functional.to_pil_image,  # Converts numpy array to PIL Image (preserves dimensions)
-                transforms.ToTensor(),  # Converts PIL Image to tensor (preserves dimensions)
-            ])
-            # NOTE: No Resize() transform here - we preserve original dimensions from scaled videos
+            # Scaled videos are already processed in Stage 3 - typically only apply normalization
+            # However, if fixed_size is set and differs from scaled video size, we need to resize
+            # This is critical for models like ViT that require exact input dimensions (e.g., 256x256)
+            logger.debug("Using scaled videos: checking if resizing is needed")
+            
+            # Check if fixed_size is set and we need to resize
+            # Some models (e.g., ViT) require exact dimensions, so we resize even for scaled videos
+            if fixed_size is not None:
+                # Add resize to fixed_size to ensure exact dimensions
+                # This is needed for models that require specific input sizes (e.g., ViT with img_size=256)
+                logger.debug(f"Resizing scaled videos to fixed_size={fixed_size} for model compatibility")
+                self._frame_transform = transforms.Compose([
+                    transforms.functional.to_pil_image,  # Converts numpy array to PIL Image
+                    transforms.Resize((fixed_size, fixed_size), antialias=True),  # Resize to exact size
+                    transforms.ToTensor(),  # Converts PIL Image to tensor
+                ])
+            else:
+                # No fixed_size set - preserve original dimensions from scaled videos
+                logger.debug("No fixed_size set: preserving original dimensions from scaled videos")
+                self._frame_transform = transforms.Compose([
+                    transforms.functional.to_pil_image,  # Converts numpy array to PIL Image (preserves dimensions)
+                    transforms.ToTensor(),  # Converts PIL Image to tensor (preserves dimensions)
+                ])
+            
+            # Always apply normalization
             self._post_tensor_transform = transforms.Compose([
-                transforms.Normalize(mean=IMG_MEAN, std=IMG_STD)  # Only normalization, no resizing
+                transforms.Normalize(mean=IMG_MEAN, std=IMG_STD)  # Only normalization
             ])
         else:
             # Legacy path: Use comprehensive augmentations if available, otherwise fallback to basic

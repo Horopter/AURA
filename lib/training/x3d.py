@@ -59,23 +59,33 @@ class X3DModel(nn.Module):
                 )
             
             # Replace classification head for binary classification
-            # PyTorchVideo X3D models typically have a head with a projection layer
-            # Try multiple strategies to find and replace the final classification layer
+            # PyTorchVideo X3D models have the classification head at blocks[-1].proj
+            # Based on official PyTorchVideo documentation: model.blocks[-1].proj
             head_replaced = False
             
-            # Strategy 1: Direct head.proj access (most common for PyTorchVideo X3D)
-            if hasattr(self.backbone, 'head'):
+            # Strategy 1: PyTorchVideo X3D structure - blocks[-1].proj (official structure)
+            if hasattr(self.backbone, 'blocks') and len(self.backbone.blocks) > 0:
+                last_block = self.backbone.blocks[-1]
+                if hasattr(last_block, 'proj') and isinstance(last_block.proj, nn.Linear):
+                    in_features = last_block.proj.in_features
+                    last_block.proj = nn.Linear(in_features, 1)
+                    head_replaced = True
+                    logger.debug("Replaced X3D classification head at blocks[-1].proj (PyTorchVideo structure)")
+            
+            # Strategy 2: Alternative structure - head.proj
+            if not head_replaced and hasattr(self.backbone, 'head'):
                 if hasattr(self.backbone.head, 'proj') and isinstance(self.backbone.head.proj, nn.Linear):
                     in_features = self.backbone.head.proj.in_features
                     self.backbone.head.proj = nn.Linear(in_features, 1)
                     head_replaced = True
+                    logger.debug("Replaced X3D classification head at head.proj")
                 elif isinstance(self.backbone.head, nn.Linear):
-                    # Head is directly a Linear layer
                     in_features = self.backbone.head.in_features
                     self.backbone.head = nn.Linear(in_features, 1)
                     head_replaced = True
+                    logger.debug("Replaced X3D classification head at head (direct Linear)")
             
-            # Strategy 2: Find the last Linear layer in the model
+            # Strategy 3: Find the last Linear layer in the model (fallback)
             if not head_replaced:
                 last_linear_name = None
                 last_linear_in_features = None
@@ -96,14 +106,45 @@ class X3DModel(nn.Module):
                     else:
                         setattr(self.backbone, last_linear_name, nn.Linear(last_linear_in_features, 1))
                     head_replaced = True
-                    logger.debug(f"Replaced classification head at: {last_linear_name}")
+                    logger.debug(f"Replaced X3D classification head at: {last_linear_name} (fallback search)")
             
             if not head_replaced:
-                logger.warning("Could not find classification head in PyTorchVideo X3D model. Model may not work correctly.")
+                raise RuntimeError(
+                    "CRITICAL: Could not find classification head in PyTorchVideo X3D model. "
+                    "Expected structure: blocks[-1].proj or head.proj. "
+                    "Model structure may have changed or model may not be properly loaded."
+                )
             
             self.use_pytorchvideo = True
             backbone_loaded = True
+            
+            # Verify we actually have an X3D model, not a fallback
+            model_name = str(type(self.backbone).__name__).lower()
+            model_str = str(self.backbone).lower()
+            
+            # Check model structure to verify it's actually X3D
+            is_x3d = (
+                'x3d' in model_name or 
+                'x3d' in model_str or
+                hasattr(self.backbone, 'blocks')  # PyTorchVideo X3D has blocks
+            )
+            
+            if not is_x3d:
+                raise RuntimeError(
+                    f"CRITICAL: Loaded model does not appear to be X3D. "
+                    f"Model type: {type(self.backbone).__name__}. "
+                    f"Model structure: {list(self.backbone.named_children())[:5] if hasattr(self.backbone, 'named_children') else 'N/A'}. "
+                    f"This may indicate a fallback or incorrect model was loaded."
+                )
+            
             logger.info(f"✓ Successfully loaded X3D model from PyTorchVideo: {pytorchvideo_model_name}")
+            logger.info(f"✓ Verified X3D model structure: {type(self.backbone).__name__}")
+            
+            # Log model structure for debugging
+            if hasattr(self.backbone, 'blocks'):
+                logger.debug(f"X3D model has {len(self.backbone.blocks)} blocks (PyTorchVideo structure)")
+            if hasattr(self.backbone, 'head'):
+                logger.debug(f"X3D model has head attribute: {type(self.backbone.head).__name__}")
             
         except Exception as e:
             logger.warning(f"Failed to load X3D from PyTorchVideo: {e}. Trying torchvision...")
@@ -133,33 +174,48 @@ class X3DModel(nn.Module):
                 self.use_pytorchvideo = False
                 self.use_torchvision = True
                 backbone_loaded = True
+                
+                # Verify we actually have an X3D model
+                model_name = str(type(self.backbone).__name__).lower()
+                model_str = str(self.backbone).lower()
+                
+                # Check model structure to verify it's actually X3D
+                is_x3d = (
+                    'x3d' in model_name or 
+                    'x3d' in model_str or
+                    hasattr(self.backbone, 'stem') and hasattr(self.backbone, 'blocks')  # torchvision X3D structure
+                )
+                
+                if not is_x3d:
+                    raise RuntimeError(
+                        f"CRITICAL: Loaded model does not appear to be X3D. "
+                        f"Model type: {type(self.backbone).__name__}. "
+                        f"Model structure: {list(self.backbone.named_children())[:5] if hasattr(self.backbone, 'named_children') else 'N/A'}. "
+                        f"This may indicate a fallback or incorrect model was loaded."
+                    )
+                
                 logger.info("✓ Successfully loaded X3D model from torchvision")
+                logger.info(f"✓ Verified X3D model structure: {type(self.backbone).__name__}")
+                
+                # Log model structure for debugging
+                if hasattr(self.backbone, 'stem'):
+                    logger.debug("X3D model has stem (torchvision structure)")
+                if hasattr(self.backbone, 'blocks'):
+                    logger.debug(f"X3D model has {len(self.backbone.blocks)} blocks")
                 
             except (ImportError, AttributeError) as e:
-                logger.warning(f"torchvision X3D not available: {e}. Using r3d_18 as approximation.")
+                logger.error(f"torchvision X3D not available: {e}")
                 backbone_loaded = False
         
-        # Final fallback: use r3d_18 as approximation
+        # CRITICAL: Do NOT use r3d_18 as fallback - require actual X3D model
         if not backbone_loaded:
-            try:
-                from torchvision.models.video import r3d_18, R3D_18_Weights
-                try:
-                    weights = R3D_18_Weights.KINETICS400_V1
-                    self.backbone = r3d_18(weights=weights)
-                except (AttributeError, ValueError):
-                    self.backbone = r3d_18(pretrained=pretrained)
-                
-                # Replace classification head
-                self.backbone.fc = nn.Linear(self.backbone.fc.in_features, 1)
-                self.use_pytorchvideo = False
-                self.use_torchvision = False
-                logger.warning("⚠ Using r3d_18 as X3D approximation (X3D not available)")
-            except Exception as e:
-                raise RuntimeError(
-                    f"Failed to load X3D model or fallback. "
-                    f"Tried PyTorchVideo, torchvision, and r3d_18. Last error: {e}. "
-                    f"Please install pytorchvideo: pip install pytorchvideo"
-                ) from e
+            raise RuntimeError(
+                f"CRITICAL: Failed to load X3D model. "
+                f"Tried PyTorchVideo and torchvision. "
+                f"X3D model is required - please install pytorchvideo: pip install pytorchvideo "
+                f"or ensure torchvision has X3D support. "
+                f"Fallback to r3d_18 is disabled to ensure proper model implementation."
+            )
         
         self.variant = variant
     

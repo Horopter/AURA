@@ -4,6 +4,7 @@ Tests feature preprocessing functions with dummy feature matrices.
 """
 import pytest
 import numpy as np
+import polars as pl
 from unittest.mock import patch
 from lib.training.feature_preprocessing import (
     remove_collinear_features,

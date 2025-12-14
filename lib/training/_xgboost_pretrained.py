@@ -546,11 +546,21 @@ class XGBoostPretrainedBaseline:
         
         # Handle both old and new VideoConfig versions (some servers may not have fixed_size parameter)
         # CRITICAL: Stage 5 ALWAYS uses scaled videos from Stage 3, so use_scaled_videos must be True
+        # CRITICAL: For ViT models (vit_gru, vit_transformer), we MUST ensure fixed_size=256
+        # VideoDataset will resize to fixed_size even when use_scaled_videos=True (see video.py fix)
+        is_vit_model = self.base_model_type in ["vit_gru", "vit_transformer"]
+        
+        if is_vit_model:
+            logger.info(
+                f"ViT model ({self.base_model_type}) requires 256x256 input. "
+                f"Setting fixed_size=256 (VideoDataset will resize even with use_scaled_videos=True)."
+            )
+        
         try:
             video_config = VideoConfig(
                 num_frames=self.num_frames,
-                fixed_size=256,
-                use_scaled_videos=True  # Stage 5 always uses scaled videos
+                fixed_size=256,  # CRITICAL: ViT models require 256x256, others benefit from consistent size
+                use_scaled_videos=True  # Stage 5 always uses scaled videos (VideoDataset handles resizing if needed)
             )
         except TypeError:
             # Fallback: server version doesn't support these parameters
@@ -559,9 +569,9 @@ class XGBoostPretrainedBaseline:
                 "Using default VideoConfig and setting manually."
             )
             video_config = VideoConfig(num_frames=self.num_frames)
-            # CRITICAL: Set use_scaled_videos=True even if constructor doesn't support it
-            video_config.use_scaled_videos = True
-            logger.info("Manually set use_scaled_videos=True on VideoConfig (server version fallback)")
+            video_config.fixed_size = 256  # Force 256x256 for ViT models
+            video_config.use_scaled_videos = True  # Stage 5 requirement
+            logger.info("Manually set fixed_size=256, use_scaled_videos=True (server version fallback)")
         
         # CRITICAL: Verify use_scaled_videos is True (Stage 5 requirement)
         if not getattr(video_config, 'use_scaled_videos', False):
@@ -571,6 +581,15 @@ class XGBoostPretrainedBaseline:
             )
             video_config.use_scaled_videos = True
             logger.info("Forced use_scaled_videos=True on VideoConfig (Stage 5 requirement)")
+        
+        # CRITICAL: For ViT models, verify fixed_size=256 is set
+        if is_vit_model:
+            if getattr(video_config, 'fixed_size', None) != 256:
+                logger.warning(
+                    f"CRITICAL: ViT model requires fixed_size=256, but got {getattr(video_config, 'fixed_size', None)}. "
+                    f"Forcing fixed_size=256."
+                )
+                video_config.fixed_size = 256
         
         dataset = VideoDataset(df, project_root=project_root, config=video_config, train=False)
         

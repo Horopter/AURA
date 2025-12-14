@@ -124,18 +124,21 @@ class TestRetryWithBackoff:
     
     def test_retry_with_backoff_success(self):
         """Test retry_with_backoff with successful function."""
+        from lib.utils.guardrails import RetryConfig
         call_count = [0]
         
         def func():
             call_count[0] += 1
             return 42
         
-        result = retry_with_backoff(func, max_retries=3)
+        config = RetryConfig(max_retries=3)
+        result = retry_with_backoff(func, config=config)
         assert result == 42
         assert call_count[0] == 1
     
     def test_retry_with_backoff_retries(self):
         """Test retry_with_backoff retries on failure."""
+        from lib.utils.guardrails import RetryConfig
         call_count = [0]
         
         def func():
@@ -144,7 +147,8 @@ class TestRetryWithBackoff:
                 raise OSError("Temporary error")
             return 42
         
-        result = retry_with_backoff(func, max_retries=3)
+        config = RetryConfig(max_retries=3)
+        result = retry_with_backoff(func, config=config)
         assert result == 42
         assert call_count[0] == 2
 
@@ -154,6 +158,7 @@ class TestValidateFileIntegrity:
     
     def test_validate_file_integrity_exists(self, temp_dir):
         """Test validate_file_integrity with existing file."""
+        from pathlib import Path
         test_file = Path(temp_dir) / "test.txt"
         test_file.write_text("test content")
         
@@ -162,6 +167,7 @@ class TestValidateFileIntegrity:
     
     def test_validate_file_integrity_not_exists(self, temp_dir):
         """Test validate_file_integrity with non-existing file."""
+        from pathlib import Path
         test_file = Path(temp_dir) / "nonexistent.txt"
         
         is_valid, reason = validate_file_integrity(str(test_file))
@@ -178,6 +184,7 @@ class TestValidateDirectory:
     
     def test_validate_directory_not_exists(self, temp_dir):
         """Test validate_directory with non-existing directory."""
+        from pathlib import Path
         nonexistent = Path(temp_dir) / "nonexistent"
         is_valid, reason = validate_directory(str(nonexistent))
         assert is_valid is False

@@ -42,19 +42,37 @@ class R2Plus1DModel(nn.Module):
             self.use_torchvision = True
             
         except ImportError:
-            logger.warning("torchvision R(2+1)D not available. Using fallback implementation.")
-            # Fallback: use R3D_18 as approximation
-            from torchvision.models.video import r3d_18, R3D_18_Weights
-            if pretrained:
-                try:
-                    weights = R3D_18_Weights.KINETICS400_V1
-                    self.backbone = r3d_18(weights=weights)
-                except (AttributeError, ValueError):
-                    self.backbone = r3d_18(pretrained=True)
-            else:
-                self.backbone = r3d_18(pretrained=False)
-            self.backbone.fc = nn.Linear(self.backbone.fc.in_features, 1)
-            self.use_torchvision = True
+            raise ImportError(
+                "CRITICAL: torchvision R(2+1)D (r2plus1d_18) is required. "
+                "Please install torchvision with video model support. "
+                "Fallback to r3d_18 is disabled to ensure proper R(2+1)D implementation."
+            )
+        
+        # Verify we actually have an R(2+1)D model
+        model_name = str(type(self.backbone).__name__).lower()
+        model_str = str(self.backbone).lower()
+        
+        # Check model structure to verify it's actually R(2+1)D
+        is_r2plus1d = (
+            'r2plus1d' in model_name or 
+            'r2plus1d' in model_str or
+            'r(2+1)d' in model_str or
+            hasattr(self.backbone, 'stem') and hasattr(self.backbone, 'layer1')  # torchvision R(2+1)D structure
+        )
+        
+        if not is_r2plus1d:
+            raise RuntimeError(
+                f"CRITICAL: Loaded model does not appear to be R(2+1)D. "
+                f"Model type: {type(self.backbone).__name__}. "
+                f"Model structure: {list(self.backbone.named_children())[:5] if hasattr(self.backbone, 'named_children') else 'N/A'}. "
+                f"This may indicate a fallback or incorrect model was loaded."
+            )
+        
+        logger.info(f"✓ Verified R(2+1)D model structure: {type(self.backbone).__name__}")
+        
+        # Log model structure for debugging
+        if hasattr(self.backbone, 'stem'):
+            logger.debug("R(2+1)D model has stem (torchvision structure)")
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

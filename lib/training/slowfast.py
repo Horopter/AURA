@@ -65,6 +65,38 @@ class SlowFastModel(nn.Module):
             self.use_pytorchvideo = False
             self.use_r3d_fallback = False
             
+            # Verify we actually have a SlowFast model
+            model_name = str(type(self.backbone).__name__).lower()
+            model_str = str(self.backbone).lower()
+            
+            # Check model structure to verify it's actually SlowFast
+            # SlowFast models have dual pathways (pathway0/pathway1 or slow_pathway/fast_pathway)
+            is_slowfast = (
+                'slowfast' in model_name or 
+                'slowfast' in model_str or
+                hasattr(self.backbone, 'pathway0') or 
+                hasattr(self.backbone, 'pathway1') or
+                hasattr(self.backbone, 'slow_pathway') or
+                hasattr(self.backbone, 'fast_pathway') or
+                ('slow' in model_str and 'fast' in model_str and 'pathway' in model_str)
+            )
+            
+            if not is_slowfast:
+                raise RuntimeError(
+                    f"CRITICAL: Loaded model does not appear to be SlowFast. "
+                    f"Model type: {type(self.backbone).__name__}. "
+                    f"Model structure: {list(self.backbone.named_children())[:5] if hasattr(self.backbone, 'named_children') else 'N/A'}. "
+                    f"This may indicate a fallback or incorrect model was loaded."
+                )
+            
+            logger.info(f"✓ Verified SlowFast model structure: {type(self.backbone).__name__}")
+            
+            # Log model structure for debugging
+            if hasattr(self.backbone, 'pathway0') or hasattr(self.backbone, 'pathway1'):
+                logger.debug("SlowFast model has pathway0/pathway1 (PyTorchVideo structure)")
+            if hasattr(self.backbone, 'slow_pathway') or hasattr(self.backbone, 'fast_pathway'):
+                logger.debug("SlowFast model has slow_pathway/fast_pathway")
+            
         except (ImportError, AttributeError):
             # Try PyTorch Hub (recommended method for pytorchvideo models)
             logger.info("torchvision SlowFast not available. Trying PyTorch Hub (pytorchvideo)...")
@@ -79,19 +111,49 @@ class SlowFastModel(nn.Module):
                     self.backbone = torch.hub.load('facebookresearch/pytorchvideo', 'slowfast_r50', pretrained=False)
                 
                 # Replace classification head for binary classification
-                if hasattr(self.backbone, 'blocks'):
-                    # pytorchvideo SlowFast structure
+                # PyTorchVideo SlowFast structure varies - try multiple strategies
+                head_replaced = False
+                
+                # Strategy 1: blocks[-1].proj (common PyTorchVideo structure)
+                if hasattr(self.backbone, 'blocks') and len(self.backbone.blocks) > 0:
                     last_block = self.backbone.blocks[-1]
-                    if hasattr(last_block, 'proj'):
+                    if hasattr(last_block, 'proj') and isinstance(last_block.proj, nn.Linear):
                         in_features = last_block.proj.in_features
                         last_block.proj = nn.Linear(in_features, 1)
-                    else:
-                        # Add a new head
-                        self.backbone.fc = nn.Linear(2048, 1)
-                elif hasattr(self.backbone, 'fc'):
+                        head_replaced = True
+                        logger.debug("Replaced SlowFast classification head at blocks[-1].proj")
+                
+                # Strategy 2: Direct fc attribute (torchvision-style)
+                if not head_replaced and hasattr(self.backbone, 'fc'):
                     in_features = self.backbone.fc.in_features
                     self.backbone.fc = nn.Linear(in_features, 1)
-                else:
+                    head_replaced = True
+                    logger.debug("Replaced SlowFast classification head at fc")
+                
+                # Strategy 3: Find last Linear layer (fallback)
+                if not head_replaced:
+                    last_linear_name = None
+                    last_linear_in_features = None
+                    for name, module in self.backbone.named_modules():
+                        if isinstance(module, nn.Linear):
+                            last_linear_name = name
+                            last_linear_in_features = module.in_features
+                    
+                    if last_linear_name is not None:
+                        parts = last_linear_name.split('.')
+                        if len(parts) > 1:
+                            parent = self.backbone
+                            for part in parts[:-1]:
+                                parent = getattr(parent, part)
+                            setattr(parent, parts[-1], nn.Linear(last_linear_in_features, 1))
+                        else:
+                            setattr(self.backbone, last_linear_name, nn.Linear(last_linear_in_features, 1))
+                        head_replaced = True
+                        logger.debug(f"Replaced SlowFast classification head at: {last_linear_name} (fallback)")
+                
+                if not head_replaced:
+                    # Last resort: add new fc layer (may not work correctly)
+                    logger.warning("Could not find SlowFast classification head, adding new fc layer (may not work correctly)")
                     self.backbone.fc = nn.Linear(2048, 1)
                 
                 self.use_torchvision = False  # PyTorchVideo models need list input
@@ -99,6 +161,37 @@ class SlowFastModel(nn.Module):
                 self.use_r3d_fallback = False
                 hub_loaded = True
                 logger.info("✓ Loaded SlowFast from PyTorch Hub (pytorchvideo)")
+                
+                # Verify we actually have a SlowFast model
+                model_name = str(type(self.backbone).__name__).lower()
+                model_str = str(self.backbone).lower()
+                
+                # Check model structure to verify it's actually SlowFast
+                is_slowfast = (
+                    'slowfast' in model_name or 
+                    'slowfast' in model_str or
+                    hasattr(self.backbone, 'pathway0') or 
+                    hasattr(self.backbone, 'pathway1') or
+                    hasattr(self.backbone, 'slow_pathway') or
+                    hasattr(self.backbone, 'fast_pathway') or
+                    ('slow' in model_str and 'fast' in model_str and 'pathway' in model_str)
+                )
+                
+                if not is_slowfast:
+                    raise RuntimeError(
+                        f"CRITICAL: Loaded model does not appear to be SlowFast. "
+                        f"Model type: {type(self.backbone).__name__}. "
+                        f"Model structure: {list(self.backbone.named_children())[:5] if hasattr(self.backbone, 'named_children') else 'N/A'}. "
+                        f"This may indicate a fallback or incorrect model was loaded."
+                    )
+                
+                logger.info(f"✓ Verified SlowFast model structure: {type(self.backbone).__name__}")
+                
+                # Log model structure for debugging
+                if hasattr(self.backbone, 'pathway0') or hasattr(self.backbone, 'pathway1'):
+                    logger.debug("SlowFast model has pathway0/pathway1 (PyTorch Hub structure)")
+                if hasattr(self.backbone, 'blocks'):
+                    logger.debug(f"SlowFast model has {len(self.backbone.blocks)} blocks")
             except Exception as hub_error:
                 logger.debug(f"Failed to load from PyTorch Hub: {hub_error}")
             
@@ -130,25 +223,83 @@ class SlowFastModel(nn.Module):
                             logger.warning(f"Could not load pretrained weights: {e}, using random initialization")
                     
                     # Replace classification head for binary classification
-                    if hasattr(self.backbone, 'blocks'):
-                        # pytorchvideo SlowFast structure
+                    # PyTorchVideo create_slowfast structure
+                    head_replaced = False
+                    
+                    if hasattr(self.backbone, 'blocks') and len(self.backbone.blocks) > 0:
                         last_block = self.backbone.blocks[-1]
-                        if hasattr(last_block, 'proj'):
+                        if hasattr(last_block, 'proj') and isinstance(last_block.proj, nn.Linear):
                             in_features = last_block.proj.in_features
                             last_block.proj = nn.Linear(in_features, 1)
-                        else:
-                            # Add a new head
-                            self.backbone.fc = nn.Linear(2048, 1)
-                    elif hasattr(self.backbone, 'fc'):
+                            head_replaced = True
+                            logger.debug("Replaced SlowFast classification head at blocks[-1].proj (create_slowfast)")
+                    
+                    if not head_replaced and hasattr(self.backbone, 'fc'):
                         in_features = self.backbone.fc.in_features
                         self.backbone.fc = nn.Linear(in_features, 1)
-                    else:
+                        head_replaced = True
+                        logger.debug("Replaced SlowFast classification head at fc (create_slowfast)")
+                    
+                    if not head_replaced:
+                        # Find last Linear layer
+                        last_linear_name = None
+                        last_linear_in_features = None
+                        for name, module in self.backbone.named_modules():
+                            if isinstance(module, nn.Linear):
+                                last_linear_name = name
+                                last_linear_in_features = module.in_features
+                        
+                        if last_linear_name is not None:
+                            parts = last_linear_name.split('.')
+                            if len(parts) > 1:
+                                parent = self.backbone
+                                for part in parts[:-1]:
+                                    parent = getattr(parent, part)
+                                setattr(parent, parts[-1], nn.Linear(last_linear_in_features, 1))
+                            else:
+                                setattr(self.backbone, last_linear_name, nn.Linear(last_linear_in_features, 1))
+                            head_replaced = True
+                            logger.debug(f"Replaced SlowFast classification head at: {last_linear_name} (create_slowfast fallback)")
+                    
+                    if not head_replaced:
+                        logger.warning("Could not find SlowFast classification head in create_slowfast model, adding new fc layer")
                         self.backbone.fc = nn.Linear(2048, 1)
                     
                     self.use_torchvision = True
                     self.use_r3d_fallback = False
                     pytorchvideo_loaded = True
                     logger.info("✓ Loaded SlowFast from pytorchvideo")
+                    
+                    # Verify we actually have a SlowFast model
+                    model_name = str(type(self.backbone).__name__).lower()
+                    model_str = str(self.backbone).lower()
+                    
+                    # Check model structure to verify it's actually SlowFast
+                    is_slowfast = (
+                        'slowfast' in model_name or 
+                        'slowfast' in model_str or
+                        hasattr(self.backbone, 'pathway0') or 
+                        hasattr(self.backbone, 'pathway1') or
+                        hasattr(self.backbone, 'slow_pathway') or
+                        hasattr(self.backbone, 'fast_pathway') or
+                        ('slow' in model_str and 'fast' in model_str and 'pathway' in model_str)
+                    )
+                    
+                    if not is_slowfast:
+                        raise RuntimeError(
+                            f"CRITICAL: Loaded model does not appear to be SlowFast. "
+                            f"Model type: {type(self.backbone).__name__}. "
+                            f"Model structure: {list(self.backbone.named_children())[:5] if hasattr(self.backbone, 'named_children') else 'N/A'}. "
+                            f"This may indicate a fallback or incorrect model was loaded."
+                        )
+                    
+                    logger.info(f"✓ Verified SlowFast model structure: {type(self.backbone).__name__}")
+                    
+                    # Log model structure for debugging
+                    if hasattr(self.backbone, 'pathway0') or hasattr(self.backbone, 'pathway1'):
+                        logger.debug("SlowFast model has pathway0/pathway1 (create_slowfast structure)")
+                    if hasattr(self.backbone, 'blocks'):
+                        logger.debug(f"SlowFast model has {len(self.backbone.blocks)} blocks")
                 except ImportError:
                     logger.debug("pytorchvideo not available")
                     pytorchvideo_loaded = False
@@ -214,6 +365,35 @@ class SlowFastModel(nn.Module):
                             self.use_r3d_fallback = False
                             hf_loaded = True
                             logger.info(f"✓ Loaded SlowFast from {model_name}")
+                            
+                            # Verify we actually have a SlowFast model
+                            model_name_check = str(type(self.backbone).__name__).lower()
+                            model_str_check = str(self.backbone).lower()
+                            
+                            # Check model structure to verify it's actually SlowFast
+                            is_slowfast = (
+                                'slowfast' in model_name_check or 
+                                'slowfast' in model_str_check or
+                                hasattr(self.backbone, 'pathway0') or 
+                                hasattr(self.backbone, 'pathway1') or
+                                hasattr(self.backbone, 'slow_pathway') or
+                                hasattr(self.backbone, 'fast_pathway') or
+                                ('slow' in model_str_check and 'fast' in model_str_check and 'pathway' in model_str_check)
+                            )
+                            
+                            if not is_slowfast:
+                                raise RuntimeError(
+                                    f"CRITICAL: Loaded model does not appear to be SlowFast. "
+                                    f"Model type: {type(self.backbone).__name__}. "
+                                    f"Model structure: {list(self.backbone.named_children())[:5] if hasattr(self.backbone, 'named_children') else 'N/A'}. "
+                                    f"This may indicate a fallback or incorrect model was loaded."
+                                )
+                            
+                            logger.info(f"✓ Verified SlowFast model structure: {type(self.backbone).__name__}")
+                            
+                            # Log model structure for debugging
+                            if hasattr(self.backbone, 'pathway0') or hasattr(self.backbone, 'pathway1'):
+                                logger.debug("SlowFast model has pathway0/pathway1 (HuggingFace structure)")
                             break
                         except Exception as hf_error:
                             logger.debug(f"Failed to load from {model_name}: {hf_error}")
@@ -229,101 +409,24 @@ class SlowFastModel(nn.Module):
                     logger.warning(f"Failed to load SlowFast from HuggingFace: {e}")
                     raise ImportError("HuggingFace SlowFast not available")
             
-            # Final fallback: use r3d_18 as pretrained backbone (similar to X3D)
+            # CRITICAL: Do NOT use r3d_18 or simplified SlowFast as fallback - require actual SlowFast model
             if not hub_loaded and not pytorchvideo_loaded and not hf_loaded:
-                logger.warning("All SlowFast sources failed. Using r3d_18 as pretrained backbone.")
-                try:
-                    from torchvision.models.video import r3d_18, R3D_18_Weights
-                    if pretrained:
-                        try:
-                            weights = R3D_18_Weights.KINETICS400_V1
-                            self.backbone = r3d_18(weights=weights)
-                        except (AttributeError, ValueError):
-                            self.backbone = r3d_18(pretrained=True)
-                    else:
-                        self.backbone = r3d_18(pretrained=False)
-                    
-                    # Replace classification head for binary classification
-                    self.backbone.fc = nn.Linear(self.backbone.fc.in_features, 1)
-                    self.use_torchvision = True  # Use backbone directly in forward
-                    self.use_r3d_fallback = True  # Mark that we're using r3d_18
-                except (ImportError, AttributeError):
-                    # Final fallback: simplified SlowFast without pretrained weights
-                    logger.warning("r3d_18 also not available. Using simplified SlowFast (no pretrained weights).")
-                    self.use_torchvision = False
-                    self.use_r3d_fallback = False
-                    self._build_simplified_slowfast(slow_frames, fast_frames, alpha, beta)
+                raise RuntimeError(
+                    f"CRITICAL: Failed to load SlowFast model. "
+                    f"Tried torchvision, PyTorch Hub (pytorchvideo), pytorchvideo library, and HuggingFace. "
+                    f"SlowFast model is required - please install pytorchvideo: pip install pytorchvideo "
+                    f"or ensure torchvision has SlowFast support. "
+                    f"Fallback to r3d_18 or simplified SlowFast is disabled to ensure proper model implementation."
+                )
         
         self.slow_frames = slow_frames
         self.fast_frames = fast_frames
         self.alpha = alpha
     
-    def _build_simplified_slowfast(
-        self,
-        slow_frames: int,
-        fast_frames: int,
-        alpha: int,
-        beta: float
-    ):
-        """Build simplified SlowFast architecture."""
-        # Slow pathway: 3D ResNet-like
-        slow_channels = 64
-        self.slow_pathway = nn.Sequential(
-            # Stem
-            nn.Conv3d(3, slow_channels, kernel_size=(1, 7, 7), stride=(1, 2, 2), padding=(0, 3, 3)),
-            nn.BatchNorm3d(slow_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(slow_channels, slow_channels, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)),
-            nn.BatchNorm3d(slow_channels),
-            nn.ReLU(inplace=True),
-            
-            # Res blocks (simplified)
-            self._make_res_block(slow_channels, slow_channels * 2, stride=2),
-            self._make_res_block(slow_channels * 2, slow_channels * 4, stride=2),
-            self._make_res_block(slow_channels * 4, slow_channels * 8, stride=2),
-        )
-        
-        # Fast pathway: fewer channels, more frames
-        fast_channels = int(slow_channels * beta)
-        self.fast_pathway = nn.Sequential(
-            # Stem
-            nn.Conv3d(3, fast_channels, kernel_size=(5, 7, 7), stride=(1, 2, 2), padding=(2, 3, 3)),
-            nn.BatchNorm3d(fast_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(fast_channels, fast_channels, kernel_size=(3, 3, 3), stride=(1, 2, 2), padding=(1, 1, 1)),
-            nn.BatchNorm3d(fast_channels),
-            nn.ReLU(inplace=True),
-            
-            # Res blocks
-            self._make_res_block(fast_channels, fast_channels * 2, stride=2),
-            self._make_res_block(fast_channels * 2, fast_channels * 4, stride=2),
-            self._make_res_block(fast_channels * 4, fast_channels * 8, stride=2),
-        )
-        
-        # Lateral connections (simplified: just concatenate)
-        # In real SlowFast, there are lateral connections between pathways
-        
-        # Fusion and classification
-        fusion_dim = slow_channels * 8 + fast_channels * 8
-        self.fusion = nn.Sequential(
-            nn.AdaptiveAvgPool3d((1, 1, 1)),
-            nn.Flatten(),
-            nn.Linear(fusion_dim, 512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(512, 1)
-        )
-    
-    def _make_res_block(self, in_channels: int, out_channels: int, stride: int = 1):
-        """Make a simplified 3D ResNet block."""
-        return nn.Sequential(
-            nn.Conv3d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1),
-            nn.BatchNorm3d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm3d(out_channels),
-            nn.ReLU(inplace=True),
-        )
+    # REMOVED: _build_simplified_slowfast and _make_res_block methods
+    # These were fallback implementations that are no longer used.
+    # We now require actual SlowFast models from PyTorchVideo, torchvision, or HuggingFace.
+    # This ensures proper model implementation and prevents silent fallbacks to approximations.
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -382,6 +485,13 @@ class SlowFastModel(nn.Module):
                         f"(temporal: {T} frames) to meet minimum spatial dimension requirements"
                     )
         
+        # CRITICAL: Ensure we're not using fallback implementations
+        if self.use_r3d_fallback:
+            raise RuntimeError(
+                "CRITICAL: SlowFast is using r3d_18 fallback. This should not happen - "
+                "proper SlowFast model should be loaded. Check model initialization."
+            )
+        
         if self.use_torchvision:
             # Use torchvision's SlowFast
             return self.backbone(x)
@@ -423,32 +533,12 @@ class SlowFastModel(nn.Module):
                 return self.backbone([slow_x, fast_x])
             raise
         
-        # Simplified SlowFast
-        N, C, T, H, W = x.shape
-        
-        # Sample frames for slow and fast pathways
-        # Slow: sample every alpha frames
-        slow_indices = torch.arange(0, T, self.alpha, device=x.device)
-        slow_x = x[:, :, slow_indices, :, :]  # (N, C, T_slow, H, W)
-        
-        # Fast: use all frames (or sample at higher rate)
-        fast_x = x  # (N, C, T, H, W)
-        
-        # Process through pathways
-        slow_features = self.slow_pathway(slow_x)  # (N, C_slow, T', H', W')
-        fast_features = self.fast_pathway(fast_x)  # (N, C_fast, T'', H'', W'')
-        
-        # Temporal alignment (simplified: just pool)
-        slow_features = F.adaptive_avg_pool3d(slow_features, (1, 1, 1))  # (N, C_slow, 1, 1, 1)
-        fast_features = F.adaptive_avg_pool3d(fast_features, (1, 1, 1))  # (N, C_fast, 1, 1, 1)
-        
-        # Concatenate
-        combined = torch.cat([slow_features, fast_features], dim=1)  # (N, C_slow+C_fast, 1, 1, 1)
-        
-        # Classification
-        logits = self.fusion(combined)  # (N, 1)
-        
-        return logits
+        # If we reach here, something went wrong - we should have handled all cases above
+        raise RuntimeError(
+            "CRITICAL: SlowFast forward pass reached unreachable code. "
+            "This indicates the model was not properly initialized. "
+            "Check that use_torchvision, use_pytorchvideo, or proper fallback was set."
+        )
 
 
 __all__ = ["SlowFastModel"]

@@ -156,7 +156,7 @@ class TestValidateVideoFile:
         video_path = Path(temp_dir) / "nonexistent.mp4"
         is_valid, reason = validate_video_file(str(video_path))
         assert is_valid is False
-        assert "not found" in reason.lower()
+        assert "does not exist" in reason.lower() or "not found" in reason.lower()
 
 
 class TestCalculateAdaptiveNumFrames:
@@ -166,8 +166,9 @@ class TestCalculateAdaptiveNumFrames:
         """Test calculate_adaptive_num_frames returns valid number."""
         num_frames = calculate_adaptive_num_frames(
             total_frames=100,
-            target_duration_sec=5.0,
-            fps=30.0
+            frame_percentage=0.10,
+            min_frames=5,
+            max_frames=50
         )
         assert isinstance(num_frames, int)
         assert num_frames > 0

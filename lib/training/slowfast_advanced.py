@@ -142,25 +142,44 @@ class MultiScaleSlowFastModel(nn.Module):
         self.pathways = nn.ModuleList()
         
         for scale in scales:
-            # Use a simplified 3D ResNet-like backbone for each pathway
+            # CRITICAL: Use actual SlowFast pathways, not r3d_18 or simple CNN
+            # For multi-scale, we use SlowFast pathways with different temporal sampling
+            # Create a SlowFast model and extract its pathways
             try:
-                from torchvision.models.video import r3d_18, R3D_18_Weights
-                if pretrained:
-                    try:
-                        weights = R3D_18_Weights.KINETICS400_V1
-                        pathway = r3d_18(weights=weights)
-                    except (AttributeError, ValueError):
-                        pathway = r3d_18(pretrained=True)
-                else:
-                    pathway = r3d_18(pretrained=False)
+                # Use base SlowFast model to get proper pathway architecture
+                slowfast_base = SlowFastModel(
+                    slow_frames=16,
+                    fast_frames=64,
+                    alpha=8,
+                    beta=1.0/8,
+                    pretrained=pretrained
+                )
                 
-                # Remove classification head
-                pathway = nn.Sequential(*list(pathway.children())[:-1])
-                self.pathways.append(pathway)
-            except (ImportError, AttributeError):
-                # Fallback: simple 3D CNN
-                pathway = self._build_simple_pathway()
-                self.pathways.append(pathway)
+                # Extract pathways from SlowFast model
+                # PyTorchVideo SlowFast has pathway0 and pathway1
+                if hasattr(slowfast_base.backbone, 'pathway0') and hasattr(slowfast_base.backbone, 'pathway1'):
+                    # Use slow pathway for all scales (proper SlowFast architecture)
+                    pathway = slowfast_base.backbone.pathway0
+                    self.pathways.append(pathway)
+                    logger.debug(f"Using SlowFast pathway0 for scale {scale}")
+                elif hasattr(slowfast_base.backbone, 'blocks'):
+                    # Alternative structure - use blocks
+                    pathway = slowfast_base.backbone
+                    self.pathways.append(pathway)
+                    logger.debug(f"Using SlowFast blocks for scale {scale}")
+                else:
+                    raise RuntimeError(
+                        f"CRITICAL: SlowFast model does not have expected pathway structure. "
+                        f"Cannot extract pathways for multi-scale SlowFast. "
+                        f"Model structure: {list(slowfast_base.backbone.named_children())[:5] if hasattr(slowfast_base.backbone, 'named_children') else 'N/A'}"
+                    )
+            except Exception as e:
+                raise RuntimeError(
+                    f"CRITICAL: Failed to create SlowFast pathway for scale {scale}. "
+                    f"Multi-scale SlowFast requires proper SlowFast model. "
+                    f"Error: {e}. "
+                    f"Fallback to r3d_18 or simple CNN is disabled to ensure proper implementation."
+                ) from e
         
         # Fusion: combine features from all pathways
         # Assume each pathway outputs features of dimension 512
@@ -176,22 +195,10 @@ class MultiScaleSlowFastModel(nn.Module):
             nn.Linear(512, 1)
         )
     
-    def _build_simple_pathway(self):
-        """Build a simple 3D CNN pathway."""
-        return nn.Sequential(
-            nn.Conv3d(3, 64, kernel_size=(3, 7, 7), stride=(1, 2, 2), padding=(1, 3, 3)),
-            nn.BatchNorm3d(64),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(64, 128, kernel_size=(3, 3, 3), stride=(1, 2, 2), padding=(1, 1, 1)),
-            nn.BatchNorm3d(128),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(128, 256, kernel_size=(3, 3, 3), stride=(1, 2, 2), padding=(1, 1, 1)),
-            nn.BatchNorm3d(256),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(256, 512, kernel_size=(3, 3, 3), stride=(1, 2, 2), padding=(1, 1, 1)),
-            nn.BatchNorm3d(512),
-            nn.ReLU(inplace=True),
-        )
+    # REMOVED: _build_simple_pathway method
+    # This was a fallback implementation that is no longer used.
+    # Multi-scale SlowFast now requires actual SlowFast pathways from SlowFastModel.
+    # This ensures proper model implementation and prevents silent fallbacks to approximations.
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

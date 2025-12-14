@@ -10,6 +10,7 @@ Provides:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import defaultdict
 from typing import Dict, List, Tuple, Optional
 import logging
 

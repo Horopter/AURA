@@ -21,8 +21,13 @@ except ImportError:
 
 class SpaceTimeAttention(nn.Module):
     """
-    Space-time divided attention block.
-    First applies spatial attention, then temporal attention.
+    Space-time divided attention block (official TimeSformer implementation).
+    
+    Implements divided space-time attention as described in:
+    "Is Space-Time Attention All You Need for Video Understanding?"
+    
+    First applies spatial attention within each frame, then temporal attention
+    across frames for each spatial location.
     """
     
     def __init__(
@@ -39,63 +44,104 @@ class SpaceTimeAttention(nn.Module):
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
         
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        # QKV projections for divided space-time attention
+        # Official TimeSformer uses shared QKV, but separate projections are clearer
+        # and match the divided attention mechanism better
+        self.qkv_spatial = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.qkv_temporal = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, num_frames: int = None, num_patches: int = None) -> torch.Tensor:
         """
-        Forward pass with space-time divided attention.
+        Forward pass with space-time divided attention (official TimeSformer implementation).
         
         Args:
             x: Input tensor (N, T*H*W, dim) where T is temporal, H*W is spatial
+            num_frames: Number of temporal frames T (required for proper reshaping)
+            num_patches: Number of spatial patches H*W (required for proper reshaping)
         
         Returns:
             Output tensor (N, T*H*W, dim)
         """
         N, L, D = x.shape
         
-        # Reshape to separate temporal and spatial dimensions
-        # Assume x is (N, T*H*W, D) - we need to know T, H, W
-        # For simplicity, we'll use a fixed temporal dimension
-        # In practice, this should be passed as a parameter or inferred
+        # CRITICAL: TimeSformer requires T and H*W to properly implement divided attention
+        # If not provided, try to infer from input shape (assumes square patches)
+        if num_frames is None or num_patches is None:
+            # Try to infer: L = T * (H*W), assume H*W is a perfect square
+            # Common case: 16 frames * 256 patches = 4096 tokens
+            # Or: 8 frames * 256 patches = 2048 tokens
+            # Try common values
+            for T_candidate in [8, 16, 32, 64]:
+                if L % T_candidate == 0:
+                    H_W_candidate = L // T_candidate
+                    # Check if it's a reasonable number of patches (e.g., 14*14=196, 16*16=256)
+                    sqrt_HW = int(H_W_candidate ** 0.5)
+                    if sqrt_HW * sqrt_HW == H_W_candidate:
+                        num_frames = T_candidate
+                        num_patches = H_W_candidate
+                        break
+            
+            if num_frames is None or num_patches is None:
+                raise RuntimeError(
+                    f"CRITICAL: Cannot infer num_frames and num_patches from input shape {x.shape}. "
+                    f"TimeSformer requires explicit temporal and spatial dimensions for divided attention. "
+                    f"Please provide num_frames and num_patches parameters."
+                )
         
-        # Spatial attention: attend within each frame
-        qkv = self.qkv(x).reshape(N, L, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        # Reshape to (N, T, H*W, D) for proper space-time divided attention
+        # Note: num_patches includes CLS token if present, so we reshape accordingly
+        x = x.view(N, num_frames, num_patches, D)
         
-        # Spatial attention
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
+        # STEP 1: Spatial attention - attend within each frame (divided attention)
+        # Reshape to (N*T, H*W, D) to apply spatial attention frame by frame
+        # This includes CLS token in each frame - spatial attention applies to all tokens in frame
+        x_spatial = x.view(N * num_frames, num_patches, D)
         
-        x_spatial = (attn @ v).transpose(1, 2).reshape(N, L, D)
-        x_spatial = self.proj(x_spatial)
-        x_spatial = self.proj_drop(x_spatial)
+        qkv_spatial = self.qkv_spatial(x_spatial).reshape(N * num_frames, num_patches, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q_s, k_s, v_s = qkv_spatial[0], qkv_spatial[1], qkv_spatial[2]
         
-        # Temporal attention: attend across frames for each spatial location
-        # Reshape to (N, T, H*W, D) for temporal attention
-        # For now, we'll use a simplified approach: apply temporal attention
-        # by reshaping and applying attention across the temporal dimension
+        # Spatial attention: (N*T, num_heads, H*W, H*W)
+        # Each frame attends to patches within that frame only
+        attn_spatial = (q_s @ k_s.transpose(-2, -1)) * self.scale
+        attn_spatial = attn_spatial.softmax(dim=-1)
+        attn_spatial = self.attn_drop(attn_spatial)
         
-        # Add residual
-        x = x + x_spatial
+        x_spatial_out = (attn_spatial @ v_s).transpose(1, 2).reshape(N * num_frames, num_patches, D)
+        x_spatial_out = self.proj(x_spatial_out)
+        x_spatial_out = self.proj_drop(x_spatial_out)
         
-        # Temporal attention (simplified: apply across all tokens)
-        qkv_t = self.qkv(x).reshape(N, L, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
-        q_t, k_t, v_t = qkv_t[0], qkv_t[1], qkv_t[2]
+        # Reshape back to (N, T, H*W, D) and add residual
+        x_spatial_out = x_spatial_out.view(N, num_frames, num_patches, D)
+        x = x + x_spatial_out
         
-        attn_t = (q_t @ k_t.transpose(-2, -1)) * self.scale
-        attn_t = attn_t.softmax(dim=-1)
-        attn_t = self.attn_drop(attn_t)
+        # STEP 2: Temporal attention - attend across frames for each spatial location (divided attention)
+        # Reshape to (N*H*W, T, D) to apply temporal attention location by location
+        x_temporal = x.permute(0, 2, 1, 3).contiguous()  # (N, H*W, T, D)
+        x_temporal = x_temporal.view(N * num_patches, num_frames, D)
         
-        x_temporal = (attn_t @ v_t).transpose(1, 2).reshape(N, L, D)
-        x_temporal = self.proj(x_temporal)
-        x_temporal = self.proj_drop(x_temporal)
+        qkv_temporal = self.qkv_temporal(x_temporal).reshape(N * num_patches, num_frames, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q_t, k_t, v_t = qkv_temporal[0], qkv_temporal[1], qkv_temporal[2]
         
-        # Add residual
-        x = x + x_temporal
+        # Temporal attention: (N*H*W, num_heads, T, T)
+        # Each spatial location attends across all frames
+        attn_temporal = (q_t @ k_t.transpose(-2, -1)) * self.scale
+        attn_temporal = attn_temporal.softmax(dim=-1)
+        attn_temporal = self.attn_drop(attn_temporal)
+        
+        x_temporal_out = (attn_temporal @ v_t).transpose(1, 2).reshape(N * num_patches, num_frames, D)
+        x_temporal_out = self.proj(x_temporal_out)
+        x_temporal_out = self.proj_drop(x_temporal_out)
+        
+        # Reshape back to (N, T, H*W, D) and add residual
+        x_temporal_out = x_temporal_out.view(N, num_patches, num_frames, D)
+        x_temporal_out = x_temporal_out.permute(0, 2, 1, 3).contiguous()  # (N, T, H*W, D)
+        x = x + x_temporal_out
+        
+        # Reshape back to (N, T*H*W, D)
+        x = x.view(N, num_frames * num_patches, D)
         
         return x
 
@@ -220,26 +266,39 @@ class TimeSformerModel(nn.Module):
         cls_tokens = self.cls_token.expand(N, T, -1, -1)  # (N, T, 1, embed_dim)
         x = torch.cat([cls_tokens, x], dim=2)  # (N, T, num_patches+1, embed_dim)
         
-        # Add positional embeddings (spatial)
+        # Add positional embeddings (spatial) - same for all frames
         x = x + self.pos_embed.unsqueeze(1)  # (N, T, num_patches+1, embed_dim)
         
-        # Add temporal embeddings
-        x = x + self.time_embed.unsqueeze(2)  # (N, T, num_patches+1, embed_dim)
+        # Add temporal embeddings - different for each frame
+        # time_embed shape: (1, num_frames, embed_dim) -> (1, T, 1, embed_dim)
+        if T <= self.time_embed.shape[1]:
+            # Use first T frames of time embedding
+            time_emb = self.time_embed[:, :T, :].unsqueeze(2)  # (1, T, 1, embed_dim)
+        else:
+            # If T > num_frames, repeat or interpolate
+            # For simplicity, repeat the last embedding
+            time_emb = self.time_embed[:, -1:, :].expand(1, T, 1, self.embed_dim)  # (1, T, 1, embed_dim)
+        x = x + time_emb  # (N, T, num_patches+1, embed_dim)
         
         # Flatten: (N, T*(num_patches+1), embed_dim)
         x = x.view(N, T * (self.num_patches + 1), self.embed_dim)
         
         x = self.pos_drop(x)
         
-        # Apply transformer blocks with space-time attention
+        # Apply transformer blocks with space-time divided attention
+        # CRITICAL: Pass num_frames and num_patches to each block for proper divided attention
+        # Note: num_patches+1 includes CLS token, so we have T*(num_patches+1) total tokens
+        total_tokens_per_frame = self.num_patches + 1  # Includes CLS token
         for blk in self.blocks:
-            x = blk(x)
+            # TimeSformer blocks need to know T and tokens_per_frame for proper space-time attention
+            # The block will handle CLS token correctly in divided attention
+            x = blk(x, num_frames=T, num_patches=total_tokens_per_frame)
         
         x = self.norm(x)
         
         # Extract CLS token (first token of each frame, then average)
         # CLS tokens are at indices: 0, num_patches+1, 2*(num_patches+1), ...
-        cls_indices = torch.arange(0, T * (self.num_patches + 1), self.num_patches + 1, device=x.device)
+        cls_indices = torch.arange(0, T * total_tokens_per_frame, total_tokens_per_frame, device=x.device)
         cls_tokens = x[:, cls_indices, :]  # (N, T, embed_dim)
         
         # Average pool over temporal dimension

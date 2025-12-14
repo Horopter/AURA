@@ -5,6 +5,7 @@ Tests memory cleanup functions.
 import pytest
 import torch
 import torch.nn as nn
+from unittest.mock import Mock
 from lib.training.cleanup_utils import (
     cleanup_model_and_memory,
     cleanup_resources,

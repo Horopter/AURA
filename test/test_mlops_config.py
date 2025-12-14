@@ -18,19 +18,21 @@ class TestRunConfig:
     
     def test_run_config_default(self):
         """Test RunConfig with default values."""
-        config = RunConfig()
+        config = RunConfig(run_id="test_run", experiment_name="test_exp")
         
-        assert config.project_root is not None
-        assert config.experiment_name is not None
+        assert config.run_id == "test_run"
+        assert config.experiment_name == "test_exp"
 
 
 class TestExperimentTracker:
     """Tests for ExperimentTracker class."""
     
-    def test_initialization(self):
+    def test_initialization(self, temp_dir):
         """Test ExperimentTracker initialization."""
-        tracker = ExperimentTracker()
+        run_dir = str(Path(temp_dir) / "runs" / "test_run")
+        tracker = ExperimentTracker(run_dir=run_dir)
         assert tracker is not None
+        assert tracker.run_dir.exists()
 
 
 class TestCheckpointManager:
@@ -38,7 +40,10 @@ class TestCheckpointManager:
     
     def test_initialization(self, temp_dir):
         """Test CheckpointManager initialization."""
-        manager = CheckpointManager(checkpoint_dir=str(Path(temp_dir) / "checkpoints"))
+        manager = CheckpointManager(
+            checkpoint_dir=str(Path(temp_dir) / "checkpoints"),
+            run_id="test_run"
+        )
         assert manager.checkpoint_dir is not None
 
 
@@ -56,12 +61,13 @@ class TestCreateRunDirectory:
     
     def test_create_run_directory_basic(self, temp_dir):
         """Test create_run_directory creates directory."""
-        run_dir = create_run_directory(
-            base_dir=temp_dir,
+        run_dir, run_id = create_run_directory(
+            base_dir=str(temp_dir),
             experiment_name="test_exp"
         )
         
         assert Path(run_dir).exists()
+        assert run_id is not None
 
 
 if __name__ == "__main__":

@@ -97,30 +97,40 @@ class I3DModel(nn.Module):
                 logger.debug(f"pytorchvideo library not available or failed: {pv_error}")
                 pytorchvideo_loaded = False
         
-        # Final fallback: use R3D_18 as approximation (available in torchvision)
+        # CRITICAL: Do NOT use r3d_18 as fallback - require actual I3D model
         if not hub_loaded and not pytorchvideo_loaded:
-            logger.warning(
-                "I3D not available from pytorchvideo. Using R3D_18 as fallback. "
-                "Install pytorchvideo for true I3D: pip install pytorchvideo"
+            raise RuntimeError(
+                f"CRITICAL: Failed to load I3D model. "
+                f"Tried PyTorch Hub (pytorchvideo) and pytorchvideo library. "
+                f"I3D model is required - please install pytorchvideo: pip install pytorchvideo. "
+                f"Fallback to r3d_18 is disabled to ensure proper model implementation."
             )
-            try:
-                from torchvision.models.video import r3d_18, R3D_18_Weights
-                if pretrained:
-                    try:
-                        weights = R3D_18_Weights.KINETICS400_V1
-                        self.backbone = r3d_18(weights=weights)
-                    except (AttributeError, ValueError):
-                        self.backbone = r3d_18(pretrained=True)
-                else:
-                    self.backbone = r3d_18(pretrained=False)
-                self.backbone.fc = nn.Linear(self.backbone.fc.in_features, 1)
-                self.use_torchvision = True
-                self.use_pytorchvideo = False
-            except ImportError:
-                raise ImportError(
-                    "I3D requires either pytorchvideo or torchvision. "
-                    "Install pytorchvideo: pip install pytorchvideo"
+        
+        # Verify we actually have an I3D model
+        if hub_loaded or pytorchvideo_loaded:
+            model_name = str(type(self.backbone).__name__).lower()
+            model_str = str(self.backbone).lower()
+            
+            # Check model structure to verify it's actually I3D
+            is_i3d = (
+                'i3d' in model_name or 
+                'i3d' in model_str or
+                hasattr(self.backbone, 'blocks')  # PyTorchVideo I3D has blocks
+            )
+            
+            if not is_i3d:
+                raise RuntimeError(
+                    f"CRITICAL: Loaded model does not appear to be I3D. "
+                    f"Model type: {type(self.backbone).__name__}. "
+                    f"Model structure: {list(self.backbone.named_children())[:5] if hasattr(self.backbone, 'named_children') else 'N/A'}. "
+                    f"This may indicate a fallback or incorrect model was loaded."
                 )
+            
+            logger.info(f"✓ Verified I3D model structure: {type(self.backbone).__name__}")
+            
+            # Log model structure for debugging
+            if hasattr(self.backbone, 'blocks'):
+                logger.debug(f"I3D model has {len(self.backbone.blocks)} blocks (PyTorchVideo structure)")
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

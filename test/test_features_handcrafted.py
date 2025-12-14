@@ -4,6 +4,7 @@ Tests handcrafted feature extraction with dummy frames.
 """
 import pytest
 import numpy as np
+from pathlib import Path
 from unittest.mock import Mock, patch
 from lib.features.handcrafted import (
     _check_ffprobe_available,
@@ -69,7 +70,7 @@ class TestExtractBlurSharpness:
         features = extract_blur_sharpness(frame)
         
         assert isinstance(features, dict)
-        assert "blur" in features or "sharpness" in features
+        assert "laplacian_var" in features or "gradient_mean" in features
 
 
 class TestExtractBoundaryInconsistency:
@@ -128,11 +129,11 @@ class TestHandcraftedFeatureExtractor:
         assert extractor is not None
     
     def test_extract_from_frame(self):
-        """Test extract_from_frame method."""
+        """Test extract method (extract_from_frame is now extract)."""
         extractor = HandcraftedFeatureExtractor()
         frame = np.random.randint(0, 256, (224, 224, 3), dtype=np.uint8)
         
-        features = extractor.extract_from_frame(frame)
+        features = extractor.extract(frame)
         
         assert isinstance(features, dict)
 
