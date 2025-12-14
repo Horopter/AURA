@@ -56,6 +56,21 @@ class TrainConfig:
     warmup_factor: float = 0.1  # Initial LR = base_lr * warmup_factor
     # Gradient monitoring
     log_grad_norm: bool = True  # Log gradient norms for debugging
+    # Memory management
+    hyper_aggressive_gc: bool = False  # Enable hyper-aggressive GC for memory-intensive models (X3D, SlowFast)
+
+
+@dataclass
+class EpochConfig:
+    """Configuration for training one epoch."""
+    use_class_weights: bool = True
+    use_amp: bool = True
+    epoch: int = 0
+    log_interval: int = 10
+    gradient_accumulation_steps: int = 1
+    max_grad_norm: float = 1.0
+    log_grad_norm: bool = False
+    hyper_aggressive_gc: bool = False
 
 
 class EarlyStopping:
@@ -111,6 +126,111 @@ def freeze_backbone_unfreeze_head(model: nn.Module) -> None:
 def trainable_params(model: nn.Module) -> Iterable[torch.nn.Parameter]:
     """Get trainable parameters."""
     return (p for p in model.parameters() if p.requires_grad)
+
+
+def _convert_and_normalize_clips(clips: torch.Tensor) -> torch.Tensor:
+    """
+    Convert clips to float32 and apply ImageNet normalization.
+    
+    Args:
+        clips: Input tensor (may be uint8 or float)
+    
+    Returns:
+        Normalized float32 tensor
+    """
+    # CRITICAL: Convert to float32 and normalize BEFORE moving to device
+    # VideoDataset should already do this, but ensure it's done for all models
+    # Check for uint8 (ByteTensor) or any non-float type
+    if clips.dtype != torch.float32:
+        # Convert to float32 - handle both uint8 [0, 255] and already normalized [0.0, 1.0]
+        if clips.dtype == torch.uint8:
+            # Convert uint8 [0, 255] to float32 [0.0, 1.0]
+            clips = clips.float() / 255.0
+        else:
+            # Already in [0.0, 1.0] range but wrong dtype, just convert
+            clips = clips.float()
+        
+        # Apply normalization (ImageNet mean/std - matching video.py)
+        IMG_MEAN = [0.485, 0.456, 0.406]
+        IMG_STD = [0.229, 0.224, 0.225]
+        # Normalize: (x - mean) / std
+        # clips is (N, C, T, H, W) or (N, T, C, H, W)
+        if clips.dim() == 5:
+            if clips.shape[1] == 3:  # (N, C, T, H, W)
+                mean = torch.tensor(IMG_MEAN, device=clips.device, dtype=torch.float32).view(1, 3, 1, 1, 1)
+                std = torch.tensor(IMG_STD, device=clips.device, dtype=torch.float32).view(1, 3, 1, 1, 1)
+            else:  # (N, T, C, H, W)
+                mean = torch.tensor(IMG_MEAN, device=clips.device, dtype=torch.float32).view(1, 1, 3, 1, 1)
+                std = torch.tensor(IMG_STD, device=clips.device, dtype=torch.float32).view(1, 1, 3, 1, 1)
+            clips = (clips - mean) / std
+    
+    # Final safety check: ensure it's float32
+    if clips.dtype != torch.float32:
+        clips = clips.float()
+    
+    return clips
+
+
+def _perform_hyper_aggressive_gc(device: str) -> None:
+    """Perform hyper-aggressive garbage collection for memory-intensive models."""
+    from lib.utils.memory import aggressive_gc
+    
+    if device.startswith("cuda"):
+        # HYPER-AGGRESSIVE: Multiple passes for maximum memory cleanup
+        for _ in range(5):
+            aggressive_gc(clear_cuda=True)
+        for _ in range(3):
+            torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    else:
+        aggressive_gc(clear_cuda=False)
+
+
+def _handle_training_error(
+    error: RuntimeError,
+    batch_idx: int,
+    device: str,
+    gradient_accumulation_steps: int,
+    optimizer: Optimizer
+) -> bool:
+    """
+    Handle errors during training.
+    
+    Args:
+        error: The RuntimeError that occurred
+        batch_idx: Current batch index
+        device: Device string
+        gradient_accumulation_steps: Gradient accumulation steps
+        optimizer: Optimizer instance
+    
+    Returns:
+        True if batch should be skipped, False if error should be re-raised
+    """
+    error_msg = str(error).lower()
+    
+    if "out of memory" in error_msg or ("cuda" in error_msg and "memory" in error_msg):
+        # OOM during forward pass - clear cache and re-raise
+        from lib.utils.memory import handle_oom_error
+        handle_oom_error(error, f"forward pass batch {batch_idx}")
+        # Clear gradients to free memory
+        if batch_idx % gradient_accumulation_steps == 0:
+            optimizer.zero_grad()
+        # Re-raise to let caller handle (may reduce batch size or skip batch)
+        return False  # Don't skip, re-raise
+    elif "smaller than kernel size" in error_msg or ("input image" in error_msg and "smaller" in error_msg):
+        # Input dimension mismatch (e.g., X3D/SlowFast with too small spatial dimensions)
+        # Skip this batch and continue training
+        logger.warning(
+            f"Skipping batch {batch_idx} due to input dimension mismatch: {error}. "
+            f"This may indicate videos with very small spatial dimensions."
+        )
+        # Clear gradients if at start of accumulation cycle to avoid stale gradients
+        if batch_idx % gradient_accumulation_steps == 0:
+            optimizer.zero_grad()
+        return True  # Skip batch
+    else:
+        # Not OOM or dimension mismatch - re-raise original error
+        return False  # Don't skip, re-raise
 
 
 def compute_class_counts(loader: DataLoader, num_classes: int) -> torch.Tensor:
@@ -268,21 +388,60 @@ def train_one_epoch(
     loader: DataLoader,
     optimizer: Optimizer,
     device: str,
-    use_class_weights: bool = True,
-    use_amp: bool = True,
+    epoch_cfg: Optional[EpochConfig] = None,
+    # Legacy parameters (for backward compatibility)
+    use_class_weights: Optional[bool] = None,
+    use_amp: Optional[bool] = None,
     epoch: int = 0,
     log_interval: int = 10,
     gradient_accumulation_steps: int = 1,
     max_grad_norm: float = 1.0,
     log_grad_norm: bool = False,
+    hyper_aggressive_gc: bool = False,
 ) -> float:
     """
     Train model for one epoch.
+    
+    Args:
+        model: Model to train
+        loader: Data loader
+        optimizer: Optimizer
+        device: Device string
+        epoch_cfg: Epoch configuration (preferred)
+        use_class_weights: Use class weights (legacy, overridden by epoch_cfg)
+        use_amp: Use AMP (legacy, overridden by epoch_cfg)
+        epoch: Epoch number (legacy, overridden by epoch_cfg)
+        log_interval: Log interval (legacy, overridden by epoch_cfg)
+        gradient_accumulation_steps: Gradient accumulation steps (legacy, overridden by epoch_cfg)
+        max_grad_norm: Max gradient norm (legacy, overridden by epoch_cfg)
+        log_grad_norm: Log gradient norm (legacy, overridden by epoch_cfg)
+        hyper_aggressive_gc: Hyper-aggressive GC (legacy, overridden by epoch_cfg)
     
     Returns:
         Average training loss
     """
     from lib.utils.memory import aggressive_gc
+    
+    # Use epoch_cfg if provided, otherwise use legacy parameters
+    if epoch_cfg is not None:
+        use_class_weights_val = epoch_cfg.use_class_weights
+        use_amp_val = epoch_cfg.use_amp
+        epoch_val = epoch_cfg.epoch
+        log_interval_val = epoch_cfg.log_interval
+        gradient_accumulation_steps_val = epoch_cfg.gradient_accumulation_steps
+        max_grad_norm_val = epoch_cfg.max_grad_norm
+        log_grad_norm_val = epoch_cfg.log_grad_norm
+        hyper_aggressive_gc_val = epoch_cfg.hyper_aggressive_gc
+    else:
+        # Legacy parameter handling
+        use_class_weights_val = use_class_weights if use_class_weights is not None else True
+        use_amp_val = use_amp if use_amp is not None else True
+        epoch_val = epoch
+        log_interval_val = log_interval
+        gradient_accumulation_steps_val = gradient_accumulation_steps
+        max_grad_norm_val = max_grad_norm
+        log_grad_norm_val = log_grad_norm
+        hyper_aggressive_gc_val = hyper_aggressive_gc
     
     model.train()
     total_loss = 0.0
@@ -297,7 +456,7 @@ def train_one_epoch(
     criterion: Optional[nn.Module] = None
     
     # AMP scaler
-    if use_amp and device.startswith("cuda"):
+    if use_amp_val and device.startswith("cuda"):
         try:
             scaler = torch.amp.GradScaler('cuda')
         except (AttributeError, TypeError):
@@ -306,11 +465,43 @@ def train_one_epoch(
         scaler = None
     
     for batch_idx, (clips, labels) in enumerate(loader):
-        # Aggressive GC every batch for memory-intensive models (prevents memory hogging)
-        # For very memory-intensive models, we need to clear memory after every batch
-        if batch_idx > 0:
-            # More frequent GC for memory-intensive training
+        # HYPER-AGGRESSIVE GC for X3D and SlowFast models
+        # Clear memory before EVERY batch (including first) to prevent accumulation
+        if hyper_aggressive_gc_val:
+            _perform_hyper_aggressive_gc(device)
+        elif batch_idx > 0:
+            # Standard aggressive GC for other models
             aggressive_gc(clear_cuda=device.startswith("cuda"))
+        
+        # CRITICAL: Convert to float32 and normalize BEFORE moving to device
+        # VideoDataset should already do this, but ensure it's done for all models
+        # Check for uint8 (ByteTensor) or any non-float type
+        if clips.dtype != torch.float32:
+            # Convert to float32 - handle both uint8 [0, 255] and already normalized [0.0, 1.0]
+            if clips.dtype == torch.uint8:
+                # Convert uint8 [0, 255] to float32 [0.0, 1.0]
+                clips = clips.float() / 255.0
+            else:
+                # Already in [0.0, 1.0] range but wrong dtype, just convert
+                clips = clips.float()
+            
+            # Apply normalization (ImageNet mean/std - matching video.py)
+            IMG_MEAN = [0.485, 0.456, 0.406]
+            IMG_STD = [0.229, 0.224, 0.225]
+            # Normalize: (x - mean) / std
+            # clips is (N, C, T, H, W) or (N, T, C, H, W)
+            if clips.dim() == 5:
+                if clips.shape[1] == 3:  # (N, C, T, H, W)
+                    mean = torch.tensor(IMG_MEAN, device=clips.device, dtype=torch.float32).view(1, 3, 1, 1, 1)
+                    std = torch.tensor(IMG_STD, device=clips.device, dtype=torch.float32).view(1, 3, 1, 1, 1)
+                else:  # (N, T, C, H, W)
+                    mean = torch.tensor(IMG_MEAN, device=clips.device, dtype=torch.float32).view(1, 1, 3, 1, 1)
+                    std = torch.tensor(IMG_STD, device=clips.device, dtype=torch.float32).view(1, 1, 3, 1, 1)
+                clips = (clips - mean) / std
+        
+        # Final safety check: ensure it's float32
+        if clips.dtype != torch.float32:
+            clips = clips.float()
         
         # GPU-optimized data transfer with non_blocking
         if device.startswith("cuda"):
@@ -322,7 +513,7 @@ def train_one_epoch(
         
         # Zero gradients at start of accumulation cycle (set_to_none=True is more memory efficient)
         # Use batches_processed instead of batch_idx to handle skipped batches correctly
-        if batches_processed % gradient_accumulation_steps == 0:
+        if batches_processed % gradient_accumulation_steps_val == 0:
             optimizer.zero_grad(set_to_none=True)
         
         # Infer criterion on first batch
@@ -347,39 +538,34 @@ def train_one_epoch(
             else:
                 logits = model(clips)
             
-            # CRITICAL: Aggressive GC immediately after forward pass to prevent memory accumulation
-            # This is essential for memory-intensive models that process many frames
-            aggressive_gc(clear_cuda=device.startswith("cuda"))
-            if device.startswith("cuda"):
-                torch.cuda.synchronize()  # Ensure forward pass completes before GC
+            # HYPER-AGGRESSIVE GC immediately after forward pass for X3D and SlowFast
+            # This is critical - forward pass creates many intermediate tensors
+            if hyper_aggressive_gc_val and device.startswith("cuda"):
+                # HYPER-AGGRESSIVE: Multiple passes immediately after forward
+                # Clear cache more aggressively to free up memory immediately
+                for _ in range(5):
+                    aggressive_gc(clear_cuda=True)
+                torch.cuda.synchronize()
+                for _ in range(5):  # Increased from 3 to 5 for more aggressive clearing
+                    torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                # Additional memory optimization: clear reserved but unallocated memory
+                torch.cuda.reset_peak_memory_stats()
+            else:
+                # Standard GC for other models
+                aggressive_gc(clear_cuda=device.startswith("cuda"))
+                if device.startswith("cuda"):
+                    torch.cuda.synchronize()  # Ensure forward pass completes before GC
         except RuntimeError as e:
-            error_msg = str(e).lower()
-            if "out of memory" in error_msg or "cuda" in error_msg and "memory" in error_msg:
-                # OOM during forward pass - clear cache and re-raise
-                from lib.utils.memory import handle_oom_error
-                handle_oom_error(e, f"forward pass batch {batch_idx}")
-                # Clear gradients to free memory
-                if batch_idx % gradient_accumulation_steps == 0:
-                    optimizer.zero_grad()
-                # Re-raise to let caller handle (may reduce batch size or skip batch)
-                raise
-            elif "smaller than kernel size" in error_msg or ("input image" in error_msg and "smaller" in error_msg):
-                # Input dimension mismatch (e.g., X3D/SlowFast with too small spatial dimensions)
-                # Skip this batch and continue training
-                logger.warning(
-                    f"Skipping batch {batch_idx} due to input dimension mismatch: {e}. "
-                    f"Input shape: {clips.shape}. This may indicate videos with very small spatial dimensions."
-                )
-                # Clear gradients if at start of accumulation cycle to avoid stale gradients
-                if batches_processed % gradient_accumulation_steps == 0:
-                    optimizer.zero_grad()
+            should_skip = _handle_training_error(e, batch_idx, device, gradient_accumulation_steps_val, optimizer)
+            if should_skip:
                 # Clear tensors and skip this batch - continue to next iteration
                 del clips, labels
                 if device.startswith("cuda"):
                     torch.cuda.empty_cache()
                 continue
             else:
-                # Not OOM or dimension mismatch - re-raise original error
+                # Re-raise error (OOM or other critical errors)
                 raise
         
         # Compute loss
@@ -394,7 +580,7 @@ def train_one_epoch(
             loss = criterion(logits, labels)
         
         # Scale loss for gradient accumulation
-        loss = loss / gradient_accumulation_steps
+        loss = loss / gradient_accumulation_steps_val
         
         # Backward pass
         if scaler is not None:
@@ -402,32 +588,46 @@ def train_one_epoch(
         else:
             loss.backward()
         
+        # HYPER-AGGRESSIVE GC immediately after backward pass for X3D and SlowFast
+        # Backward pass creates gradients which consume significant memory
+        if hyper_aggressive_gc_val and device.startswith("cuda"):
+            # HYPER-AGGRESSIVE: Multiple passes after backward
+            # Clear cache more aggressively to free up memory immediately
+            for _ in range(5):
+                aggressive_gc(clear_cuda=True)
+            torch.cuda.synchronize()
+            for _ in range(5):  # Increased from 3 to 5 for more aggressive clearing
+                torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            # Additional memory optimization: clear reserved but unallocated memory
+            torch.cuda.reset_peak_memory_stats()
+        
         # Increment batches_processed after successful forward and backward pass
         batches_processed += 1
         
         # Update weights at end of accumulation cycle
         # Use batches_processed instead of batch_idx to handle skipped batches correctly
-        if batches_processed % gradient_accumulation_steps == 0:
+        if batches_processed % gradient_accumulation_steps_val == 0:
             # Gradient clipping (before optimizer step)
-            if max_grad_norm > 0:
+            if max_grad_norm_val > 0:
                 if scaler is not None:
                     # Unscale gradients before clipping (required for AMP)
                     scaler.unscale_(optimizer)
                     # Clip gradients
                     grad_norm = torch.nn.utils.clip_grad_norm_(
                         model.parameters(), 
-                        max_norm=max_grad_norm
+                        max_norm=max_grad_norm_val
                     )
                 else:
                     # Clip gradients directly
                     grad_norm = torch.nn.utils.clip_grad_norm_(
                         model.parameters(), 
-                        max_norm=max_grad_norm
+                        max_norm=max_grad_norm_val
                     )
                 
                 # Log gradient norm if requested
-                if log_grad_norm and batches_processed % log_interval == 0:
-                    logger.info(f"Gradient norm: {grad_norm:.4f} (clipped to {max_grad_norm})")
+                if log_grad_norm_val and batches_processed % log_interval_val == 0:
+                    logger.info(f"Gradient norm: {grad_norm:.4f} (clipped to {max_grad_norm_val})")
             
             # Optimizer step
             if scaler is not None:
@@ -437,21 +637,30 @@ def train_one_epoch(
                 optimizer.step()
             
             # CRITICAL: Aggressive GC after every optimizer step to prevent memory accumulation
-            # Clear gradients explicitly (set_to_none=True is more memory efficient, but we already zero'd at start)
-            # Just do aggressive GC to free any accumulated memory
-            aggressive_gc(clear_cuda=device.startswith("cuda"))
-            
-            # Additional CUDA cache clearing for memory-intensive models
-            if device.startswith("cuda"):
-                torch.cuda.synchronize()  # Ensure all operations complete before clearing
+            if hyper_aggressive_gc_val:
+                # HYPER-AGGRESSIVE: Maximum passes for X3D and SlowFast
+                for _ in range(5):
+                    aggressive_gc(clear_cuda=device.startswith("cuda"))
+                if device.startswith("cuda"):
+                    torch.cuda.synchronize()
+                    # Additional cache clearing passes
+                    for _ in range(5):
+                        torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    # One more aggressive GC pass after cache clearing
+                    aggressive_gc(clear_cuda=True)
+            else:
+                aggressive_gc(clear_cuda=device.startswith("cuda"))
+                if device.startswith("cuda"):
+                    torch.cuda.synchronize()  # Ensure all operations complete before clearing
         
-        total_loss += float(loss.item() * gradient_accumulation_steps)
+        total_loss += float(loss.item() * gradient_accumulation_steps_val)
         
         # Logging (use batches_processed for accurate logging)
-        if batches_processed % log_interval == 0:
+        if batches_processed % log_interval_val == 0:
             logger.info(
-                f"Epoch {epoch}, Batch {batches_processed} (loader has {len(loader)} batches), "
-                f"Loss: {loss.item() * gradient_accumulation_steps:.4f}"
+                f"Epoch {epoch_val}, Batch {batches_processed} (loader has {len(loader)} batches), "
+                f"Loss: {loss.item() * gradient_accumulation_steps_val:.4f}"
             )
     
     # Use batches_processed for average loss calculation to account for skipped batches
@@ -464,6 +673,7 @@ def evaluate(
     model: nn.Module,
     loader: DataLoader,
     device: str,
+    hyper_aggressive_gc: bool = False,  # Enable hyper-aggressive GC for memory-intensive models (X3D, SlowFast)
 ) -> Dict[str, Any]:
     """
     Evaluate model on validation/test set.
@@ -498,6 +708,9 @@ def evaluate(
     first_batch = True
     
     for clips, labels in loader:
+        # CRITICAL: Convert to float32 and normalize BEFORE moving to device
+        clips = _convert_and_normalize_clips(clips)
+        
         # GPU-optimized data transfer
         if device.startswith("cuda"):
             clips = clips.to(device, non_blocking=True)
@@ -520,9 +733,20 @@ def evaluate(
             
             # CRITICAL: Aggressive GC immediately after forward pass to prevent memory accumulation
             # This is essential for memory-intensive models that process many frames
-            aggressive_gc(clear_cuda=device.startswith("cuda"))
-            if device.startswith("cuda"):
-                torch.cuda.synchronize()  # Ensure forward pass completes before GC
+            if hyper_aggressive_gc:
+                # HYPER-AGGRESSIVE: Maximum passes for X3D and SlowFast
+                for _ in range(5):
+                    aggressive_gc(clear_cuda=device.startswith("cuda"))
+                if device.startswith("cuda"):
+                    torch.cuda.synchronize()
+                    # Additional cache clearing passes
+                    for _ in range(5):
+                        torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+            else:
+                aggressive_gc(clear_cuda=device.startswith("cuda"))
+                if device.startswith("cuda"):
+                    torch.cuda.synchronize()  # Ensure forward pass completes before GC
         except RuntimeError as e:
             error_msg = str(e).lower()
             if "smaller than kernel size" in error_msg or ("input image" in error_msg and "smaller" in error_msg):
@@ -534,6 +758,8 @@ def evaluate(
                 )
                 # Clear tensors and continue to next batch
                 del clips, labels
+                if device.startswith("cuda"):
+                    torch.cuda.empty_cache()
                 continue
             else:
                 # Re-raise other errors
@@ -624,6 +850,7 @@ def fit(
     optim_cfg: OptimConfig,
     train_cfg: TrainConfig,
     use_differential_lr: bool = False,
+    hyper_aggressive_gc: Optional[bool] = None,  # Enable hyper-aggressive GC for memory-intensive models (X3D, SlowFast)
 ) -> nn.Module:
     """
     High-level training loop with optional validation.
@@ -642,6 +869,10 @@ def fit(
     device = train_cfg.device
     model.to(device)
     model.train()  # Ensure model is in training mode
+    
+    # Use hyper_aggressive_gc from train_cfg if not explicitly provided
+    if hyper_aggressive_gc is None:
+        hyper_aggressive_gc = train_cfg.hyper_aggressive_gc
     
     # Build optimizer with optional differential learning rates
     optimizer = build_optimizer(model, optim_cfg, use_differential_lr=use_differential_lr)
@@ -690,7 +921,19 @@ def fit(
                 gradient_accumulation_steps=train_cfg.gradient_accumulation_steps,
                 max_grad_norm=optim_cfg.max_grad_norm,
                 log_grad_norm=train_cfg.log_grad_norm,
+                hyper_aggressive_gc=hyper_aggressive_gc,
             )
+            
+            # HYPER-AGGRESSIVE GC after each epoch for X3D and SlowFast
+            if hyper_aggressive_gc and device.startswith("cuda"):
+                from lib.utils.memory import aggressive_gc
+                # HYPER-AGGRESSIVE: Maximum cleanup between epochs
+                for _ in range(10):
+                    aggressive_gc(clear_cuda=True)
+                torch.cuda.synchronize()
+                for _ in range(5):
+                    torch.cuda.empty_cache()
+                torch.cuda.synchronize()
             
             # Get current learning rate
             current_lr = optimizer.param_groups[0]['lr']
@@ -702,7 +945,7 @@ def fit(
             if val_loader is not None:
                 # Ensure model is in eval mode (BatchNorm uses running stats, Dropout disabled)
                 model.eval()
-                val_metrics = evaluate(model, val_loader, device=device)
+                val_metrics = evaluate(model, val_loader, device=device, hyper_aggressive_gc=hyper_aggressive_gc)
                 val_loss = val_metrics["loss"]
                 val_acc = val_metrics["accuracy"]
                 val_f1 = val_metrics["f1"]
@@ -732,13 +975,14 @@ def fit(
             logger.info("Restored best model state based on validation accuracy")
         
         return model
-    except Exception as e:
+    except (RuntimeError, ValueError, OSError) as e:
         # Ensure GPU cleanup on error
         if device.startswith("cuda"):
             try:
                 torch.cuda.empty_cache()
-            except Exception:
-                pass
+            except (RuntimeError, AttributeError) as cleanup_error:
+                logger.warning(f"Failed to clear CUDA cache during error cleanup: {cleanup_error}")
+        raise
         # Re-raise exception after cleanup
         raise
     finally:
@@ -746,6 +990,6 @@ def fit(
         if device.startswith("cuda"):
             try:
                 torch.cuda.empty_cache()
-            except Exception:
-                pass
+            except (RuntimeError, AttributeError) as cleanup_error:
+                logger.warning(f"Failed to clear CUDA cache during error cleanup: {cleanup_error}")
 

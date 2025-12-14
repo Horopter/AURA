@@ -12,7 +12,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Union
+from typing import List, Dict, Optional, Any
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -582,6 +582,547 @@ def _train_xgboost_model_fold(
     return result if result is not None else {}
 
 
+def _train_pytorch_model_fold(
+    model_type: str,
+    model_config: Dict[str, Any],
+    train_df: Any,
+    val_df: Any,
+    project_root_str: str,
+    fold_idx: int,
+    model_output_dir: Path,
+    video_config: Any,
+    hyperparams: Optional[Dict[str, Any]] = None,
+    is_grid_search: bool = False,
+    param_fold_results: Optional[List[Dict[str, Any]]] = None,
+    fold_results: Optional[List[Dict[str, Any]]] = None,
+    use_tracking: bool = True,
+    use_mlflow: bool = True,
+    param_idx: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Train a PyTorch model on a single fold.
+    
+    Args:
+        model_type: Type of model to train
+        model_config: Base model configuration
+        train_df: Training dataframe
+        val_df: Validation dataframe
+        project_root_str: Project root as string
+        fold_idx: Fold index (0-based)
+        model_output_dir: Output directory for models
+        video_config: VideoConfig instance
+        hyperparams: Optional hyperparameters to apply
+        is_grid_search: Whether this is grid search
+        param_fold_results: Optional list to append grid search results to
+        fold_results: Optional list to append results to
+        use_tracking: Whether to use experiment tracking
+        use_mlflow: Whether to use MLflow
+        param_idx: Parameter combination index (for grid search)
+    
+    Returns:
+        Dictionary with validation metrics
+    """
+    from lib.models import VideoDataset
+    from lib.models.video import variable_ar_collate
+    from lib.training.trainer import OptimConfig, TrainConfig, fit, evaluate
+    from lib.mlops.config import ExperimentTracker, CheckpointManager
+    from lib.mlops.mlflow_tracker import create_mlflow_tracker, MLFLOW_AVAILABLE
+    
+    logger.info(f"Training PyTorch model {model_type} on fold {fold_idx + 1}...")
+    _flush_logs()
+    
+    fold_output_dir = model_output_dir / f"fold_{fold_idx + 1}"
+    fold_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create datasets
+    train_dataset = VideoDataset(train_df, project_root=project_root_str, config=video_config)
+    val_dataset = VideoDataset(val_df, project_root=project_root_str, config=video_config)
+    
+    # Create data loaders
+    use_cuda = torch.cuda.is_available()
+    current_config = model_config.copy()
+    if hyperparams:
+        current_config.update(hyperparams)
+    
+    num_workers = current_config.get("num_workers", model_config.get("num_workers", 0))
+    batch_size = current_config.get("batch_size", model_config.get("batch_size", 8))
+    gradient_accumulation_steps = current_config.get("gradient_accumulation_steps", model_config.get("gradient_accumulation_steps", 1))
+    
+    # CRITICAL: Force smaller batch sizes for memory-intensive models
+    if model_type in MEMORY_INTENSIVE_MODELS_BATCH_LIMITS:
+        max_batch_size = MEMORY_INTENSIVE_MODELS_BATCH_LIMITS[model_type]
+        if batch_size > max_batch_size:
+            effective_batch_size = batch_size * gradient_accumulation_steps
+            logger.warning(
+                f"{model_type} model requires batch_size<={max_batch_size} to prevent OOM. "
+                f"Overriding batch_size from {batch_size} to {max_batch_size}. "
+                f"Adjusting gradient_accumulation_steps to maintain effective batch size of {effective_batch_size}."
+            )
+            gradient_accumulation_steps = (effective_batch_size + max_batch_size - 1) // max_batch_size
+            batch_size = max_batch_size
+    
+    effective_batch_size = batch_size * gradient_accumulation_steps
+    
+    logger.info(
+        f"Training configuration - Batch size: {batch_size}, "
+        f"Gradient accumulation steps: {gradient_accumulation_steps}, "
+        f"Effective batch size: {effective_batch_size}"
+    )
+    
+    # Memory optimization: Disable pin_memory for memory-intensive models (saves ~100-200MB)
+    # pin_memory speeds up CPU->GPU transfer but uses extra GPU memory
+    is_memory_intensive = model_type in ["x3d", "slowfast"]
+    use_pin_memory = use_cuda and not is_memory_intensive
+    # Reduce prefetch for memory-intensive models
+    prefetch_factor = 1 if (is_memory_intensive and num_workers > 0) else (2 if num_workers > 0 else None)
+    
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=use_pin_memory,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=prefetch_factor,
+        collate_fn=variable_ar_collate,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=use_pin_memory,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=prefetch_factor,
+        collate_fn=variable_ar_collate,
+    )
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Apply PyTorch memory optimizations
+    if device.type == "cuda":
+        if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
+            os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = False  # Can save memory
+        # Disable cuDNN workspace caching for memory-intensive models
+        if model_type in ["x3d", "slowfast"]:
+            torch.backends.cudnn.enabled = True  # Keep enabled but optimize
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        aggressive_gc(clear_cuda=True)
+        logger.info("Applied PyTorch memory optimizations: expandable_segments, cudnn.benchmark=False")
+    
+    # Create model
+    try:
+        model = create_model(model_type, model_config)
+    except (TypeError, ValueError) as e:
+        logger.error(f"Error creating model {model_type}: {e}")
+        raise
+    model = model.to(device)
+    
+    # Create optimizer and scheduler configs
+    optim_cfg = OptimConfig(
+        lr=current_config.get("learning_rate", model_config.get("learning_rate", 1e-4)),
+        weight_decay=current_config.get("weight_decay", model_config.get("weight_decay", 1e-4)),
+        max_grad_norm=current_config.get("max_grad_norm", model_config.get("max_grad_norm", 1.0)),
+        backbone_lr=current_config.get("backbone_lr", model_config.get("backbone_lr", None)),
+        head_lr=current_config.get("head_lr", model_config.get("head_lr", None)),
+    )
+    train_cfg = TrainConfig(
+        num_epochs=current_config.get("num_epochs", model_config.get("num_epochs", 20)),
+        device=str(device),
+        log_interval=model_config.get("log_interval", 10),
+        use_class_weights=model_config.get("use_class_weights", True),
+        use_amp=model_config.get("use_amp", True),
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        early_stopping_patience=model_config.get("early_stopping_patience", 5),
+        scheduler_type=model_config.get("scheduler_type", "cosine"),
+        warmup_epochs=model_config.get("warmup_epochs", 2),
+        warmup_factor=model_config.get("warmup_factor", 0.1),
+        log_grad_norm=model_config.get("log_grad_norm", False),
+        hyper_aggressive_gc=model_type in ["x3d", "slowfast"],
+    )
+    
+    use_differential_lr = model_type in [
+        "i3d", "r2plus1d", "slowfast", "x3d", "pretrained_inception",
+        "vit_gru", "vit_transformer"
+    ]
+    
+    # Create trackers
+    tracker = None
+    ckpt_manager = None
+    mlflow_tracker = None
+    
+    if use_tracking:
+        tracker = ExperimentTracker(str(fold_output_dir))
+    
+    run_id = f"{model_type}_fold{fold_idx + 1}"
+    if param_idx is not None:
+        run_id += f"_param{param_idx + 1}"
+    ckpt_manager = CheckpointManager(str(fold_output_dir), run_id=run_id)
+    
+    if use_mlflow and MLFLOW_AVAILABLE:
+        try:
+            import mlflow
+            if mlflow.active_run() is not None:
+                mlflow.end_run()
+                logger.debug("Ended existing MLflow run before creating new one")
+        except (RuntimeError, AttributeError, ValueError) as mlflow_error:
+            logger.debug(f"Error ending MLflow run (non-critical): {mlflow_error}")
+        
+        try:
+            mlflow_tracker = create_mlflow_tracker(experiment_name=f"{model_type}", use_mlflow=True)
+            if mlflow_tracker:
+                mlflow_tracker.log_config(model_config)
+                mlflow_tracker.set_tag("fold", str(fold_idx + 1))
+                mlflow_tracker.set_tag("model_type", model_type)
+                if param_idx is not None:
+                    mlflow_tracker.set_tag("param_combination", str(param_idx + 1))
+        except (RuntimeError, ValueError, AttributeError) as e:
+            logger.warning(f"Failed to create MLflow tracker: {e}")
+    
+    # HYPER-AGGRESSIVE GC before training for X3D and SlowFast
+    is_hyper_aggressive = model_type in ["x3d", "slowfast"]
+    if device.type == "cuda" and is_hyper_aggressive:
+        logger.info(f"Performing HYPER-AGGRESSIVE GC before training {model_type}...")
+        # Clear all possible memory
+        for _ in range(10):
+            aggressive_gc(clear_cuda=True)
+        for _ in range(10):
+            torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        # Reset peak memory stats to clear tracking overhead
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.reset_accumulated_memory_stats()
+        aggressive_gc(clear_cuda=True)
+        torch.cuda.synchronize()
+        logger.info(f"Hyper-aggressive GC complete. GPU memory cleared.")
+    
+    # Validate datasets
+    if len(train_dataset) == 0:
+        raise ValueError(f"Training dataset is empty for fold {fold_idx + 1}")
+    if len(val_dataset) == 0:
+        raise ValueError(f"Validation dataset is empty for fold {fold_idx + 1}")
+    
+    # Forward pass test (with error handling)
+    try:
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
+        model.eval()
+        with torch.no_grad():
+            test_loader = DataLoader(
+                train_dataset,
+                batch_size=1,
+                shuffle=False,
+                num_workers=0,
+                pin_memory=False,
+                collate_fn=variable_ar_collate,
+            )
+            
+            sample_batch = next(iter(test_loader))
+            sample_clips, sample_labels = sample_batch
+            
+            # Validate input dimensions for X3D and SlowFast
+            if model_type in ["x3d", "slowfast"]:
+                if sample_clips.dim() == 5:
+                    if sample_clips.shape[1] == 3:
+                        N, C, T, H, W = sample_clips.shape
+                    else:
+                        N, T, C, H, W = sample_clips.shape
+                    
+                    min_spatial_size = 32
+                    if H < min_spatial_size or W < min_spatial_size:
+                        logger.warning(
+                            f"Skipping forward pass test for {model_type}: input spatial dimensions "
+                            f"({H}x{W}) are too small (minimum {min_spatial_size}x{min_spatial_size} required). "
+                            f"Temporal dimension: {T}. Continuing with training..."
+                        )
+                        _flush_logs()
+                        del sample_batch, sample_clips, sample_labels, test_loader
+                        if device.type == "cuda":
+                            torch.cuda.empty_cache()
+                            torch.cuda.synchronize()
+                    else:
+                        # Use helper function from trainer for conversion
+                        from lib.training.trainer import _convert_and_normalize_clips
+                        sample_clips = _convert_and_normalize_clips(sample_clips)
+                        sample_clips = sample_clips.to(device, non_blocking=False)
+                        
+                        if sample_clips.dtype != torch.float32:
+                            sample_clips = sample_clips.float()
+                        
+                        # Test forward pass
+                        try:
+                            sample_output = model(sample_clips)
+                            logger.info(f"Model forward pass test successful. Output shape: {sample_output.shape}")
+                            _flush_logs()
+                        except RuntimeError as oom_error:
+                            error_msg = str(oom_error)
+                            if "out of memory" in error_msg.lower():
+                                logger.warning(
+                                    f"OOM during forward pass test. Model: {model_type}, Batch size: 1. "
+                                    f"This may indicate the model is too large for available GPU memory."
+                                )
+                                logger.warning("Attempting to continue with training (may fail if model is too large)...")
+                            elif "smaller than kernel size" in error_msg.lower() or "input image" in error_msg.lower():
+                                logger.warning(
+                                    f"Input dimension mismatch during forward pass test for {model_type}: {oom_error}. "
+                                    f"Input shape: {sample_clips.shape}. Training will handle this via error handling. Continuing..."
+                                )
+                            elif "sizes of tensors must match" in error_msg.lower() and model_type == "slowfast":
+                                logger.warning(
+                                    f"SlowFast temporal dimension mismatch during forward pass test: {oom_error}. "
+                                    f"Input shape: {sample_clips.shape}. Training will handle this via error handling. Continuing..."
+                                )
+                            else:
+                                raise
+                        
+                        del sample_batch, sample_clips, sample_labels
+                        if 'sample_output' in locals():
+                            del sample_output
+                        del test_loader
+                        
+                        if device.type == "cuda":
+                            torch.cuda.empty_cache()
+                            torch.cuda.synchronize()
+    except RuntimeError as e:
+        error_msg = str(e)
+        if "out of memory" in error_msg.lower():
+            logger.error(f"CUDA OOM during model forward pass test: {e}. Model: {model_type}, Batch size: 1.")
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            logger.warning("Continuing with training despite OOM in forward pass test...")
+        else:
+            logger.error(f"Model forward pass test failed: {e}", exc_info=True)
+            raise ValueError(f"Model initialization failed: {e}") from e
+    except (ValueError, RuntimeError) as e:
+        logger.error(f"Model forward pass test failed: {e}", exc_info=True)
+        raise ValueError(f"Model initialization failed: {e}") from e
+    
+    # Train with OOM recovery
+    max_oom_retries = 3
+    oom_retry_count = 0
+    training_successful = False
+    val_metrics = None
+    
+    while oom_retry_count <= max_oom_retries and not training_successful:
+        try:
+            # Reduce batch size on retry
+            if oom_retry_count > 0:
+                new_batch_size = max(1, batch_size // (2 ** oom_retry_count))
+                if new_batch_size < batch_size:
+                    logger.warning(f"OOM retry {oom_retry_count}: Reducing batch size from {batch_size} to {new_batch_size}")
+                    batch_size = new_batch_size
+                    gradient_accumulation_steps = effective_batch_size // batch_size
+                    if gradient_accumulation_steps < 1:
+                        gradient_accumulation_steps = 1
+                    
+                    train_cfg.gradient_accumulation_steps = gradient_accumulation_steps
+                    
+                    train_loader = DataLoader(
+                        train_dataset, batch_size=batch_size, shuffle=True,
+                        num_workers=num_workers, pin_memory=use_cuda,
+                        persistent_workers=num_workers > 0,
+                        prefetch_factor=2 if num_workers > 0 else None,
+                        collate_fn=variable_ar_collate,
+                    )
+                    val_loader = DataLoader(
+                        val_dataset, batch_size=batch_size, shuffle=False,
+                        num_workers=num_workers, pin_memory=use_cuda,
+                        persistent_workers=num_workers > 0,
+                        prefetch_factor=2 if num_workers > 0 else None,
+                        collate_fn=variable_ar_collate,
+                    )
+                    
+                    logger.info(
+                        f"Retrying with batch_size={batch_size}, "
+                        f"gradient_accumulation_steps={gradient_accumulation_steps}, "
+                        f"effective_batch_size={batch_size * gradient_accumulation_steps}"
+                    )
+                    
+                    if device.type == "cuda":
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+            
+            # Train model
+            hyper_aggressive_gc = model_type in ["x3d", "slowfast"]
+            model = fit(
+                model,
+                train_loader,
+                val_loader,
+                optim_cfg,
+                train_cfg,
+                use_differential_lr=use_differential_lr,
+                hyper_aggressive_gc=hyper_aggressive_gc,
+            )
+            
+            # Evaluate
+            if device.type == "cuda":
+                if is_hyper_aggressive:
+                    for _ in range(10):
+                        aggressive_gc(clear_cuda=True)
+                    for _ in range(10):
+                        torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                else:
+                    torch.cuda.empty_cache()
+            
+            val_metrics = evaluate(model, val_loader, device=str(device), hyper_aggressive_gc=is_hyper_aggressive)
+            training_successful = True
+            
+            # HYPER-AGGRESSIVE GC after training
+            if device.type == "cuda" and is_hyper_aggressive:
+                for _ in range(10):
+                    aggressive_gc(clear_cuda=True)
+                for _ in range(10):
+                    torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                aggressive_gc(clear_cuda=True)
+                torch.cuda.synchronize()
+            else:
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
+                aggressive_gc(clear_cuda=device.type == "cuda")
+        
+        except RuntimeError as e:
+            error_msg = str(e)
+            if ("out of memory" in error_msg.lower() or "cuda" in error_msg.lower()) and oom_retry_count < max_oom_retries:
+                logger.warning(
+                    f"CUDA OOM during training (attempt {oom_retry_count + 1}/{max_oom_retries + 1}): {e}. "
+                    f"Model: {model_type}, Fold: {fold_idx + 1}, Current batch size: {batch_size}"
+                )
+                if device.type == "cuda":
+                    if is_hyper_aggressive:
+                        for _ in range(10):
+                            aggressive_gc(clear_cuda=True)
+                        for _ in range(10):
+                            torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                        aggressive_gc(clear_cuda=True)
+                        torch.cuda.synchronize()
+                    else:
+                        for _ in range(3):
+                            torch.cuda.empty_cache()
+                            torch.cuda.synchronize()
+                        aggressive_gc(clear_cuda=True)
+                oom_retry_count += 1
+                continue
+            else:
+                if "out of memory" in error_msg.lower() or "cuda" in error_msg.lower():
+                    logger.error(f"CUDA OOM or runtime error during training (max retries reached): {e}. Model: {model_type}, Fold: {fold_idx + 1}")
+                else:
+                    logger.error(f"Runtime error during training: {e}. Model: {model_type}, Fold: {fold_idx + 1}")
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
+                raise
+        except (ValueError, RuntimeError) as e:
+            logger.error(f"Error during training: {e}. Model: {model_type}, Fold: {fold_idx + 1}")
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+            raise
+    
+    # Extract metrics
+    val_loss = val_metrics["loss"]
+    val_acc = val_metrics["accuracy"]
+    val_f1 = val_metrics["f1"]
+    val_precision = val_metrics["precision"]
+    val_recall = val_metrics["recall"]
+    per_class = val_metrics["per_class"]
+    
+    # Save model
+    try:
+        model.eval()
+        if device.type == "cuda" and is_hyper_aggressive:
+            for _ in range(10):
+                aggressive_gc(clear_cuda=True)
+            for _ in range(5):
+                torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
+        model_path = fold_output_dir / "model.pt"
+        torch.save(model.state_dict(), model_path)
+        logger.info(f"Saved model to {model_path}")
+        
+        if device.type == "cuda" and is_hyper_aggressive:
+            for _ in range(10):
+                aggressive_gc(clear_cuda=True)
+            for _ in range(10):
+                torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            aggressive_gc(clear_cuda=True)
+            torch.cuda.synchronize()
+    except (OSError, IOError, PermissionError) as e:
+        logger.error(f"Failed to save model to {model_path}: {e}")
+        raise IOError(f"Cannot save model to {model_path}") from e
+    
+    # Log to MLflow
+    if mlflow_tracker is not None:
+        try:
+            mlflow_metrics = {
+                "val_loss": val_loss,
+                "val_acc": val_acc,
+                "val_f1": val_f1,
+                "val_precision": val_precision,
+                "val_recall": val_recall,
+            }
+            for class_idx, metrics in per_class.items():
+                mlflow_metrics[f"val_precision_class{class_idx}"] = metrics["precision"]
+                mlflow_metrics[f"val_recall_class{class_idx}"] = metrics["recall"]
+                mlflow_metrics[f"val_f1_class{class_idx}"] = metrics["f1"]
+            
+            mlflow_tracker.log_metrics(mlflow_metrics, step=fold_idx + 1)
+            mlflow_tracker.log_artifact(str(model_path), artifact_path="models")
+        except (RuntimeError, ValueError, AttributeError) as e:
+            logger.warning(f"Failed to log to MLflow: {e}")
+    
+    # Build result dictionary
+    result = {
+        "fold": fold_idx + 1,
+        "val_loss": val_loss,
+        "val_acc": val_acc,
+        "val_f1": val_f1,
+        "val_precision": val_precision,
+        "val_recall": val_recall,
+        "val_f1_class0": per_class.get("0", {}).get("f1", 0.0),
+        "val_precision_class0": per_class.get("0", {}).get("precision", 0.0),
+        "val_recall_class0": per_class.get("0", {}).get("recall", 0.0),
+        "val_f1_class1": per_class.get("1", {}).get("f1", 0.0),
+        "val_precision_class1": per_class.get("1", {}).get("precision", 0.0),
+        "val_recall_class1": per_class.get("1", {}).get("recall", 0.0),
+    }
+    if hyperparams:
+        result.update(hyperparams)
+    
+    logger.info(
+        f"Fold {fold_idx + 1} - Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, "
+        f"Val F1: {val_f1:.4f}, Val Precision: {val_precision:.4f}, Val Recall: {val_recall:.4f}"
+    )
+    _flush_logs()
+    
+    if per_class:
+        for class_idx, metrics in per_class.items():
+            logger.info(
+                f"  Class {class_idx} - Precision: {metrics['precision']:.4f}, "
+                f"Recall: {metrics['recall']:.4f}, F1: {metrics['f1']:.4f}"
+            )
+    
+    # Cleanup
+    if mlflow_tracker is not None:
+        try:
+            mlflow_tracker.end_run()
+        except (RuntimeError, AttributeError, ValueError) as cleanup_error:
+            logger.debug(f"Error ending MLflow run: {cleanup_error}")
+    
+    cleanup_model_and_memory(model=model, device=device, clear_cuda=device.type == "cuda")
+    aggressive_gc(clear_cuda=device.type == "cuda")
+    
+    return result
+
+
 def _train_baseline_model_fold(
     model_type: str,
     model_config: Dict[str, Any],
@@ -847,6 +1388,15 @@ def stage5_train_models(
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         logger.info("Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True at pipeline start")
     
+    # Additional PyTorch memory optimizations
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = False  # Disable benchmark to save memory
+        torch.backends.cudnn.deterministic = False  # Can save memory
+        # Clear cache at pipeline start
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        logger.info("Applied global PyTorch memory optimizations at pipeline start")
+    
     # Immediate logging to show function has started
     logger.info("=" * 80)
     logger.info("Stage 5: Model Training Pipeline Started")
@@ -1067,6 +1617,13 @@ def stage5_train_models(
         "vit_transformer",     # 5l - Vision Transformer
     ]
     
+    # Ultra memory-intensive models that need even smaller chunk size (5) for maximum OOM resistance
+    # X3D and SlowFast are extremely memory-intensive and need the smallest chunk size
+    MEMORY_INTENSIVE_MODELS_ULTRA_SMALL_CHUNK = [
+        "x3d",                 # 5q - extremely memory intensive, needs smallest chunk size
+        "slowfast",            # 5r - dual pathway architecture, very memory intensive
+    ]
+    
     # XGBoost models that use pretrained models for feature extraction
     # These need reduced num_frames to prevent OOM during feature extraction
     XGBOOST_PRETRAINED_MODELS = [
@@ -1093,11 +1650,14 @@ def stage5_train_models(
     for model_type in model_types:
         if model_type in MEMORY_INTENSIVE_MODELS:
             use_chunked_loading = True
+            # Use ultra-small chunk size (5) for X3D and SlowFast due to extreme memory requirements
+            if model_type in MEMORY_INTENSIVE_MODELS_ULTRA_SMALL_CHUNK:
+                chunk_size = 5  # Ultra-small chunk size for maximum OOM resistance (5q, 5r)
             # Use very small chunk size (10) for models 5c-5l that have persistent OOM issues
-            if model_type in MEMORY_INTENSIVE_MODELS_SMALL_CHUNK:
+            elif model_type in MEMORY_INTENSIVE_MODELS_SMALL_CHUNK:
                 chunk_size = 10  # Initial chunk size for very memory-intensive models (5c-5l) - consistent with forward pass, capped at 28
             else:
-                chunk_size = 30  # Initial chunk size for other memory-intensive models (5o-5r)
+                chunk_size = 30  # Initial chunk size for other memory-intensive models (5o-5p)
             logger.info(
                 f"Enabling adaptive chunked frame loading for {model_type}: "
                 f"initial_chunk_size={chunk_size}, num_frames={num_frames}. "
@@ -1298,7 +1858,6 @@ def stage5_train_models(
         # Final training will use full dataset for robustness
         # Can be controlled via FVC_GRID_SEARCH_SAMPLE_SIZE environment variable (default: 0.1 = 10%)
         from sklearn.model_selection import StratifiedShuffleSplit
-        import polars as pl
         
         # Get grid search sample size from environment (default: 10% for fastest results)
         # Can be set to 0.2 for 20% (more robust but slower) or 0.05 for 5% (fastest but less robust)
@@ -1411,582 +1970,24 @@ def stage5_train_models(
                 # Train model
                 try:
                     if is_pytorch_model(model_type):
-                        # Create datasets for PyTorch models
-                        # Lazy import to avoid circular dependency
-                        # Ensure project root is in Python path for imports
-                        # Note: sys and importlib.util are already imported at module level
-                        # project_root_path is already resolved at function start
-                        
-                        # Import VideoDataset and collate function - fail fast if not available (required for video-based models)
-                        try:
-                            from lib.models import VideoDataset
-                            from lib.models.video import variable_ar_collate
-                        except ImportError as e:
-                            raise ImportError(
-                            f"Cannot import VideoDataset from lib.models. "
-                            f"Required for video-based models. Error: {e}"
-                        ) from e
-                        train_dataset = VideoDataset(
-                        train_df,
-                        project_root=project_root_str,
-                        config=video_config,
+                        # Use extracted helper function for PyTorch model training
+                        result = _train_pytorch_model_fold(
+                            model_type=model_type,
+                            model_config=model_config,
+                            train_df=train_df,
+                            val_df=val_df,
+                            project_root_str=project_root_str,
+                            fold_idx=fold_idx,
+                            model_output_dir=model_output_dir,
+                            video_config=video_config,
+                            hyperparams=params,
+                            is_grid_search=True,
+                            param_fold_results=param_fold_results,
+                            fold_results=fold_results,
+                            use_tracking=use_tracking,
+                            use_mlflow=use_mlflow,
+                            param_idx=param_idx,
                         )
-                        val_dataset = VideoDataset(
-                        val_df,
-                        project_root=project_root_str,
-                        config=video_config,
-                        )
-                    
-                        # Create data loaders
-                        # GPU-optimized DataLoader settings
-                        use_cuda = torch.cuda.is_available()
-                        num_workers = current_config.get("num_workers", model_config.get("num_workers", 0))
-                    
-                        # Get batch size and gradient accumulation for logging
-                        batch_size = current_config.get("batch_size", model_config.get("batch_size", 8))
-                        gradient_accumulation_steps = current_config.get("gradient_accumulation_steps", model_config.get("gradient_accumulation_steps", 1))
-                        
-                        # CRITICAL: Force smaller batch sizes for memory-intensive models to prevent OOM
-                        # These models process many frames (1000) at high resolution, requiring conservative batch sizes
-                        
-                        if model_type in MEMORY_INTENSIVE_MODELS_BATCH_LIMITS:
-                            max_batch_size = MEMORY_INTENSIVE_MODELS_BATCH_LIMITS[model_type]
-                            if batch_size > max_batch_size:
-                                # Calculate effective batch size before reduction
-                                effective_batch_size = batch_size * gradient_accumulation_steps
-                                logger.warning(
-                                    f"{model_type} model requires batch_size<={max_batch_size} to prevent OOM. "
-                                    f"Overriding batch_size from {batch_size} to {max_batch_size}. "
-                                    f"Adjusting gradient_accumulation_steps to maintain effective batch size of {effective_batch_size}."
-                                )
-                                # Increase gradient accumulation to maintain effective batch size
-                                gradient_accumulation_steps = (effective_batch_size + max_batch_size - 1) // max_batch_size
-                                batch_size = max_batch_size
-                        
-                        effective_batch_size = batch_size * gradient_accumulation_steps
-                        
-                        logger.info(
-                            f"Training configuration - Batch size: {batch_size}, "
-                            f"Gradient accumulation steps: {gradient_accumulation_steps}, "
-                            f"Effective batch size: {effective_batch_size}"
-                        )
-                        
-                        train_loader = DataLoader(
-                        train_dataset,
-                        batch_size=batch_size,
-                        shuffle=True,
-                        num_workers=num_workers,
-                        pin_memory=use_cuda,  # Faster GPU transfer
-                        persistent_workers=num_workers > 0,  # Keep workers alive between epochs
-                        prefetch_factor=2 if num_workers > 0 else None,  # Prefetch batches
-                        collate_fn=variable_ar_collate,  # Convert (N, T, C, H, W) to (N, C, T, H, W) for 3D CNNs
-                        )
-                        val_loader = DataLoader(
-                        val_dataset,
-                        batch_size=batch_size,
-                        shuffle=False,
-                        num_workers=num_workers,
-                        pin_memory=use_cuda,
-                        persistent_workers=num_workers > 0,
-                        prefetch_factor=2 if num_workers > 0 else None,
-                        collate_fn=variable_ar_collate,  # Convert (N, T, C, H, W) to (N, C, T, H, W) for 3D CNNs
-                        )
-                        # PyTorch model training
-                        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                        
-                        # CRITICAL: Apply PyTorch memory optimizations to prevent GPU memory from being hogged
-                        if device.type == "cuda":
-                            # Set CUDA memory allocator to use expandable segments (reduces fragmentation)
-                            if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
-                                os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-                            
-                            # Disable cuDNN benchmark to reduce memory usage (trade-off: slightly slower)
-                            torch.backends.cudnn.benchmark = False
-                            
-                            # Enable deterministic mode to reduce memory (optional, but helps with memory)
-                            torch.backends.cudnn.deterministic = False  # Keep False for performance, but benchmark=False helps memory
-                            
-                            # Clear cache before model creation
-                            torch.cuda.empty_cache()
-                            torch.cuda.synchronize()
-                            aggressive_gc(clear_cuda=True)
-                            logger.info("Applied PyTorch memory optimizations: expandable_segments, cudnn.benchmark=False")
-                        
-                        try:
-                            model = create_model(model_type, model_config)
-                        except TypeError as e:
-                            error_msg = str(e)
-                            if "unexpected keyword argument" in error_msg or "got an unexpected keyword argument" in error_msg:
-                                logger.error(
-                                    f"CRITICAL: Function signature mismatch in create_model for {model_type}: {e}. "
-                                    f"Config type: {type(model_config)}, Config keys: {list(model_config.keys()) if isinstance(model_config, dict) else 'N/A'}. "
-                                    f"Please check lib/training/model_factory.py::create_model() for correct signature."
-                                )
-                            raise
-                        except ValueError as e:
-                            logger.error(
-                                f"Value error creating model {model_type}: {e}. "
-                                f"Config: {model_config if isinstance(model_config, dict) else 'RunConfig object'}"
-                            )
-                            raise
-                        model = model.to(device)
-                    
-                        # Create optimizer and scheduler with ML best practices
-                        # Use hyperparameters from grid search if available
-                        optim_cfg = OptimConfig(
-                        lr=current_config.get("learning_rate", model_config.get("learning_rate", 1e-4)),
-                        weight_decay=current_config.get("weight_decay", model_config.get("weight_decay", 1e-4)),
-                        max_grad_norm=current_config.get("max_grad_norm", model_config.get("max_grad_norm", 1.0)),  # Gradient clipping
-                        # Use differential LR for pretrained models
-                        backbone_lr=current_config.get("backbone_lr", model_config.get("backbone_lr", None)),
-                        head_lr=current_config.get("head_lr", model_config.get("head_lr", None)),
-                        )
-                        train_cfg = TrainConfig(
-                        num_epochs=current_config.get("num_epochs", model_config.get("num_epochs", 20)),
-                        device=str(device),
-                        log_interval=model_config.get("log_interval", 10),
-                        use_class_weights=model_config.get("use_class_weights", True),
-                        use_amp=model_config.get("use_amp", True),
-                        gradient_accumulation_steps=gradient_accumulation_steps,  # Use updated value after batch_size override
-                        early_stopping_patience=model_config.get("early_stopping_patience", 5),
-                        scheduler_type=model_config.get("scheduler_type", "cosine"),  # Better than StepLR
-                        warmup_epochs=model_config.get("warmup_epochs", 2),  # LR warmup
-                        warmup_factor=model_config.get("warmup_factor", 0.1),
-                        log_grad_norm=model_config.get("log_grad_norm", False),  # Debug gradient norms
-                        )
-                    
-                        # Determine if we should use differential LR (for pretrained models)
-                        use_differential_lr = model_type in [
-                        "i3d", "r2plus1d", "slowfast", "x3d", "pretrained_inception",
-                        "vit_gru", "vit_transformer"
-                        ]
-                    
-                        # Create tracker and checkpoint manager
-                        # Note: fold_output_dir already checked above for resume mode
-                        fold_output_dir = model_output_dir / f"fold_{fold_idx + 1}"
-                        fold_output_dir.mkdir(parents=True, exist_ok=True)
-                        
-                        # Note: Fold deletion already handled above before the resume check
-                    
-                        if use_tracking:
-                            tracker = ExperimentTracker(str(fold_output_dir))
-                        # Generate unique run_id for this fold and hyperparameter combination
-                        run_id = f"{model_type}_fold{fold_idx + 1}_param{param_idx + 1}"
-                        ckpt_manager = CheckpointManager(str(fold_output_dir), run_id=run_id)
-                        
-                        # Create MLflow tracker if available
-                        mlflow_tracker = None
-                        if use_mlflow and MLFLOW_AVAILABLE:
-                            try:
-                                # End any existing MLflow run before creating a new one
-                                try:
-                                    import mlflow
-                                    if mlflow.active_run() is not None:
-                                        mlflow.end_run()
-                                        logger.debug("Ended existing MLflow run before creating new one")
-                                except Exception:
-                                    pass  # Ignore errors when ending runs
-                                
-                                mlflow_tracker = create_mlflow_tracker(
-                                    experiment_name=f"{model_type}",
-                                    use_mlflow=True
-                                )
-                                if mlflow_tracker:
-                                    # Log model config (can be dict or RunConfig)
-                                    mlflow_tracker.log_config(model_config)
-                                    mlflow_tracker.set_tag("fold", str(fold_idx + 1))
-                                    mlflow_tracker.set_tag("model_type", model_type)
-                                    mlflow_tracker.set_tag("param_combination", str(param_idx + 1))
-                            except Exception as e:
-                                logger.warning(f"Failed to create MLflow tracker: {e}")
-                        else:
-                            tracker = None
-                            ckpt_manager = None
-                    
-                        logger.info(f"Training PyTorch model {model_type} on fold {fold_idx + 1}...")
-                        _flush_logs()
-                    
-                        # Validate datasets before training
-                        if len(train_dataset) == 0:
-                            raise ValueError(f"Training dataset is empty for fold {fold_idx + 1}")
-                        if len(val_dataset) == 0:
-                            raise ValueError(f"Validation dataset is empty for fold {fold_idx + 1}")
-                    
-                        # Validate model initialization with OOM-resistant forward pass test
-                        try:
-                            # Clear CUDA cache before test to maximize available memory
-                            if device.type == "cuda":
-                                torch.cuda.empty_cache()
-                                torch.cuda.synchronize()
-                            
-                            model.eval()
-                            with torch.no_grad():
-                                # Forward pass test uses batch_size=1 to minimize memory
-                                # NOTE: This is ONLY for testing model initialization.
-                                # Actual training uses batch_size={batch_size} with gradient_accumulation_steps={gradient_accumulation_steps}
-                                # (effective batch size = {effective_batch_size})
-                                # Create a minimal test loader with batch_size=1
-                                test_loader = DataLoader(
-                                    train_dataset,
-                                    batch_size=1,  # Single sample to minimize memory (ONLY for test, not training)
-                                    shuffle=False,
-                                    num_workers=0,  # No workers to avoid memory overhead
-                                    pin_memory=False,  # Disable pinning for test
-                                    collate_fn=variable_ar_collate,  # Use same collate function as training
-                                )
-                                
-                                # Get a single sample
-                                sample_batch = next(iter(test_loader))
-                                sample_clips, sample_labels = sample_batch
-                                
-                                # CRITICAL: Validate input dimensions for X3D and SlowFast models
-                                # These models require minimum spatial dimensions (typically 32x32 or larger)
-                                # X3D uses pooling kernels of size 7x7, so needs at least 7x7, but ideally 32x32+
-                                # SlowFast also requires reasonable spatial dimensions
-                                if model_type in ["x3d", "slowfast"]:
-                                    # Check input shape: (N, C, T, H, W) or (N, T, C, H, W)
-                                    if sample_clips.dim() == 5:
-                                        if sample_clips.shape[1] == 3:  # (N, C, T, H, W)
-                                            N, C, T, H, W = sample_clips.shape
-                                        else:  # (N, T, C, H, W)
-                                            N, T, C, H, W = sample_clips.shape
-                                        
-                                        # X3D requires minimum 32x32 spatial dimensions (pooling kernel is 7x7, but needs buffer)
-                                        # SlowFast also requires reasonable spatial dimensions
-                                        min_spatial_size = 32
-                                        if H < min_spatial_size or W < min_spatial_size:
-                                            logger.warning(
-                                                f"Skipping forward pass test for {model_type}: input spatial dimensions "
-                                                f"({H}x{W}) are too small (minimum {min_spatial_size}x{min_spatial_size} required). "
-                                                f"Temporal dimension: {T}. "
-                                                f"This video may be filtered during training. Continuing with training..."
-                                            )
-                                            _flush_logs()
-                                            # Skip the forward pass test - training will handle small videos via error handling
-                                            del sample_batch, sample_clips, sample_labels
-                                            del test_loader
-                                            if device.type == "cuda":
-                                                torch.cuda.empty_cache()
-                                                torch.cuda.synchronize()
-                                            # Continue to training - the DataLoader will handle small videos
-                                            break
-                                
-                                # CRITICAL: Convert to float and normalize BEFORE moving to device
-                                # VideoDataset should already do this, but ensure it's done for forward pass test
-                                # Check for uint8 (ByteTensor) or any non-float type
-                                original_dtype = sample_clips.dtype
-                                if sample_clips.dtype != torch.float32:
-                                    logger.debug(
-                                        f"Forward pass test: Converting sample_clips from {original_dtype} to float32. "
-                                        f"Shape: {sample_clips.shape}, Device: {sample_clips.device}"
-                                    )
-                                    # Convert to float32 - handle both uint8 [0, 255] and already normalized [0.0, 1.0]
-                                    if sample_clips.dtype == torch.uint8:
-                                        # Convert uint8 [0, 255] to float32 [0.0, 1.0]
-                                        sample_clips = sample_clips.float() / 255.0
-                                    else:
-                                        # Already in [0.0, 1.0] range but wrong dtype, just convert
-                                        sample_clips = sample_clips.float()
-                                    
-                                    # Apply normalization (ImageNet mean/std - matching video.py)
-                                    IMG_MEAN = [0.485, 0.456, 0.406]
-                                    IMG_STD = [0.229, 0.224, 0.225]
-                                    # Normalize: (x - mean) / std
-                                    # sample_clips is (N, C, T, H, W) or (N, T, C, H, W)
-                                    if sample_clips.dim() == 5:
-                                        if sample_clips.shape[1] == 3:  # (N, C, T, H, W)
-                                            mean = torch.tensor(IMG_MEAN, device=sample_clips.device, dtype=torch.float32).view(1, 3, 1, 1, 1)
-                                            std = torch.tensor(IMG_STD, device=sample_clips.device, dtype=torch.float32).view(1, 3, 1, 1, 1)
-                                        else:  # (N, T, C, H, W)
-                                            mean = torch.tensor(IMG_MEAN, device=sample_clips.device, dtype=torch.float32).view(1, 1, 3, 1, 1)
-                                            std = torch.tensor(IMG_STD, device=sample_clips.device, dtype=torch.float32).view(1, 1, 3, 1, 1)
-                                        sample_clips = (sample_clips - mean) / std
-                                    
-                                    logger.debug(
-                                        f"Forward pass test: Converted sample_clips from {original_dtype} to {sample_clips.dtype}. "
-                                        f"Shape: {sample_clips.shape}, Min: {sample_clips.min().item():.3f}, Max: {sample_clips.max().item():.3f}"
-                                    )
-                                
-                                # Move to device AFTER conversion (ensures float32 on device)
-                                sample_clips = sample_clips.to(device, non_blocking=False)
-                                
-                                # Final safety check: ensure it's float32
-                                if sample_clips.dtype != torch.float32:
-                                    logger.warning(
-                                        f"Forward pass test: sample_clips is still {sample_clips.dtype} after conversion. "
-                                        f"Forcing to float32. Shape: {sample_clips.shape}"
-                                    )
-                                    sample_clips = sample_clips.float()
-                                
-                                # Test forward pass
-                                try:
-                                    sample_output = model(sample_clips)
-                                    logger.info(f"Model forward pass test successful. Output shape: {sample_output.shape}")
-                                    _flush_logs()
-                                except RuntimeError as oom_error:
-                                    error_msg = str(oom_error)
-                                    if "out of memory" in error_msg.lower():
-                                        logger.warning(
-                                            f"OOM during forward pass test. "
-                                            f"Model: {model_type}, Batch size: 1. "
-                                            f"This may indicate the model is too large for available GPU memory."
-                                        )
-                                        # Try to continue anyway - sometimes training with gradient accumulation works
-                                        logger.warning("Attempting to continue with training (may fail if model is too large)...")
-                                        # Don't raise - let training attempt proceed
-                                    elif "smaller than kernel size" in error_msg.lower() or "input image" in error_msg.lower():
-                                        # Handle dimension mismatch errors gracefully for X3D/SlowFast
-                                        logger.warning(
-                                            f"Input dimension mismatch during forward pass test for {model_type}: {oom_error}. "
-                                            f"Input shape: {sample_clips.shape}. "
-                                            f"This may indicate some videos have very small spatial dimensions. "
-                                            f"Training will handle this via error handling. Continuing..."
-                                        )
-                                        # Don't raise - let training attempt proceed
-                                    else:
-                                        raise
-                                
-                                # Cleanup
-                                del sample_batch, sample_clips, sample_labels
-                                if 'sample_output' in locals():
-                                    del sample_output
-                                del test_loader
-                                
-                                # Aggressive cache clearing
-                                if device.type == "cuda":
-                                    torch.cuda.empty_cache()
-                                    torch.cuda.synchronize()
-                                    
-                        except RuntimeError as e:
-                            error_msg = str(e)
-                            if "out of memory" in error_msg.lower():
-                                logger.error(
-                                    f"CUDA OOM during model forward pass test: {e}. "
-                                    f"Model: {model_type}, Batch size: 1. "
-                                    f"GPU memory may be insufficient for this model."
-                                )
-                                # Clear cache and try to continue
-                                if device.type == "cuda":
-                                    torch.cuda.empty_cache()
-                                    torch.cuda.synchronize()
-                                # Don't raise - let training attempt proceed with warning
-                                logger.warning("Continuing with training despite OOM in forward pass test...")
-                            else:
-                                logger.error(f"Model forward pass test failed: {e}", exc_info=True)
-                                raise ValueError(f"Model initialization failed: {e}") from e
-                        except Exception as e:
-                            logger.error(f"Model forward pass test failed: {e}", exc_info=True)
-                            raise ValueError(f"Model initialization failed: {e}") from e
-                    
-                        # Train with comprehensive error handling and OOM recovery
-                        max_oom_retries = 3
-                        oom_retry_count = 0
-                        training_successful = False
-                        
-                        while oom_retry_count <= max_oom_retries and not training_successful:
-                            try:
-                                # If we've had OOM errors, reduce batch size and recreate loaders
-                                if oom_retry_count > 0:
-                                    # Reduce batch size by half (minimum 1)
-                                    new_batch_size = max(1, batch_size // (2 ** oom_retry_count))
-                                    if new_batch_size < batch_size:
-                                        logger.warning(
-                                            f"OOM retry {oom_retry_count}: Reducing batch size from {batch_size} to {new_batch_size}"
-                                        )
-                                        batch_size = new_batch_size
-                                        # Increase gradient accumulation to maintain effective batch size
-                                        gradient_accumulation_steps = effective_batch_size // batch_size
-                                        if gradient_accumulation_steps < 1:
-                                            gradient_accumulation_steps = 1
-                                        
-                                        # Update train_cfg with new gradient accumulation
-                                        train_cfg.gradient_accumulation_steps = gradient_accumulation_steps
-                                        
-                                        # Recreate data loaders with new batch size
-                                        train_loader = DataLoader(
-                                            train_dataset,
-                                            batch_size=batch_size,
-                                            shuffle=True,
-                                            num_workers=num_workers,
-                                            pin_memory=use_cuda,
-                                            persistent_workers=num_workers > 0,
-                                            prefetch_factor=2 if num_workers > 0 else None,
-                                            collate_fn=variable_ar_collate,
-                                        )
-                                        val_loader = DataLoader(
-                                            val_dataset,
-                                            batch_size=batch_size,
-                                            shuffle=False,
-                                            num_workers=num_workers,
-                                            pin_memory=use_cuda,
-                                            persistent_workers=num_workers > 0,
-                                            prefetch_factor=2 if num_workers > 0 else None,
-                                            collate_fn=variable_ar_collate,
-                                        )
-                                        
-                                        logger.info(
-                                            f"Retrying with batch_size={batch_size}, "
-                                            f"gradient_accumulation_steps={gradient_accumulation_steps}, "
-                                            f"effective_batch_size={batch_size * gradient_accumulation_steps}"
-                                        )
-                                        
-                                        # Clear cache before retry
-                                        if device.type == "cuda":
-                                            torch.cuda.empty_cache()
-                                            torch.cuda.synchronize()
-                                
-                                model = fit(
-                                    model,
-                                    train_loader,
-                                    val_loader,
-                                    optim_cfg,
-                                    train_cfg,
-                                    use_differential_lr=use_differential_lr,  # Use differential LR for pretrained models
-                                )
-                                
-                                # Evaluate final model
-                                from lib.training.trainer import evaluate
-                                
-                                # Clear cache before evaluation
-                                if device.type == "cuda":
-                                    torch.cuda.empty_cache()
-                                
-                                val_metrics = evaluate(model, val_loader, device=str(device))
-                                
-                                val_loss = val_metrics["loss"]
-                                val_acc = val_metrics["accuracy"]
-                                val_f1 = val_metrics["f1"]
-                                val_precision = val_metrics["precision"]
-                                val_recall = val_metrics["recall"]
-                                per_class = val_metrics["per_class"]
-                                
-                                training_successful = True
-                                
-                                # Aggressive GC after successful training and evaluation
-                                if device.type == "cuda":
-                                    torch.cuda.empty_cache()
-                                    aggressive_gc(clear_cuda=True)
-                                
-                            except RuntimeError as e:
-                                # Catch CUDA OOM, invalid tensor operations, etc.
-                                error_msg = str(e)
-                                if ("out of memory" in error_msg.lower() or "cuda" in error_msg.lower()) and oom_retry_count < max_oom_retries:
-                                    logger.warning(
-                                        f"CUDA OOM during training (attempt {oom_retry_count + 1}/{max_oom_retries + 1}): {e}. "
-                                        f"Model: {model_type}, Fold: {fold_idx + 1}, "
-                                        f"Current batch size: {batch_size}"
-                                    )
-                                    # Clean up GPU memory aggressively
-                                    if device.type == "cuda":
-                                        # Multiple passes of cache clearing
-                                        for _ in range(3):
-                                            torch.cuda.empty_cache()
-                                            torch.cuda.synchronize()
-                                        aggressive_gc(clear_cuda=True)
-                                    # Increment retry count and try again with smaller batch size
-                                    oom_retry_count += 1
-                                    continue
-                                else:
-                                    # Not OOM or max retries reached
-                                    if "out of memory" in error_msg.lower() or "cuda" in error_msg.lower():
-                                        logger.error(
-                                            f"CUDA OOM or runtime error during training (max retries reached): {e}. "
-                                            f"Model: {model_type}, Fold: {fold_idx + 1}, "
-                                            f"Final batch size: {batch_size}"
-                                        )
-                                    else:
-                                        logger.error(
-                                            f"Runtime error during training: {e}. "
-                                            f"Model: {model_type}, Fold: {fold_idx + 1}"
-                                        )
-                                    # Clean up GPU memory
-                                    if device.type == "cuda":
-                                        torch.cuda.empty_cache()
-                                    raise
-                            except ValueError as e:
-                                logger.error(
-                                    f"Value error during training (likely input shape issue): {e}. "
-                                    f"Model: {model_type}, Fold: {fold_idx + 1}"
-                                )
-                                raise
-                            except Exception as e:
-                                logger.error(
-                                    f"Unexpected error during training: {e}. "
-                                    f"Model: {model_type}, Fold: {fold_idx + 1}",
-                                    exc_info=True
-                                )
-                                # Clean up GPU memory
-                                if device.type == "cuda":
-                                    torch.cuda.empty_cache()
-                                raise
-                    
-                        # Store results with hyperparameters (only reached on success)
-                        result = {
-                        "fold": fold_idx + 1,
-                        "val_loss": val_loss,
-                        "val_acc": val_acc,
-                        "val_f1": val_f1,
-                        "val_precision": val_precision,
-                        "val_recall": val_recall,
-                        "val_f1_class0": per_class.get("0", {}).get("f1", 0.0),
-                        "val_precision_class0": per_class.get("0", {}).get("precision", 0.0),
-                        "val_recall_class0": per_class.get("0", {}).get("recall", 0.0),
-                        "val_f1_class1": per_class.get("1", {}).get("f1", 0.0),
-                        "val_precision_class1": per_class.get("1", {}).get("precision", 0.0),
-                        "val_recall_class1": per_class.get("1", {}).get("recall", 0.0),
-                        }
-                        # Add hyperparameters to result
-                        result.update(params)
-                        param_fold_results.append(result)
-                        fold_results.append(result)
-                    
-                        logger.info(
-                        f"Fold {fold_idx + 1} - Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, "
-                        f"Val F1: {val_f1:.4f}, Val Precision: {val_precision:.4f}, Val Recall: {val_recall:.4f}"
-                        )
-                        _flush_logs()
-                        if per_class:
-                            for class_idx, metrics in per_class.items():
-                                logger.info(
-                                    f"  Class {class_idx} - Precision: {metrics['precision']:.4f}, "
-                                    f"Recall: {metrics['recall']:.4f}, F1: {metrics['f1']:.4f}"
-                                )
-                    
-                        # Log to MLflow if available
-                        if 'mlflow_tracker' in locals() and mlflow_tracker is not None:
-                            try:
-                                mlflow_metrics = {
-                                    "val_loss": val_loss,
-                                    "val_acc": val_acc,
-                                    "val_f1": val_f1,
-                                    "val_precision": val_precision,
-                                    "val_recall": val_recall,
-                                }
-                                # Add per-class metrics
-                                for class_idx, metrics in per_class.items():
-                                    mlflow_metrics[f"val_precision_class{class_idx}"] = metrics["precision"]
-                                    mlflow_metrics[f"val_recall_class{class_idx}"] = metrics["recall"]
-                                    mlflow_metrics[f"val_f1_class{class_idx}"] = metrics["f1"]
-                                
-                                mlflow_tracker.log_metrics(mlflow_metrics, step=fold_idx + 1)
-                                # Log model artifact (after model is saved)
-                                if 'model_path' in locals():
-                                    model_path_str = str(model_path)
-                                    mlflow_tracker.log_artifact(
-                                        model_path_str, artifact_path="models"
-                                    )
-                            except Exception as e:
-                                logger.warning(f"Failed to log to MLflow: {e}")
-                    
-                        # Save model for ensemble training
-                        try:
-                            model.eval()
-                            model_path = fold_output_dir / "model.pt"
-                            torch.save(model.state_dict(), model_path)
-                            logger.info(f"Saved model to {model_path}")
-                        except (OSError, IOError, PermissionError) as e:
-                            logger.error(f"Failed to save model to {model_path}: {e}")
-                            raise IOError(f"Cannot save model to {model_path}") from e
                     
                     elif is_xgboost_model(model_type):
                         # XGBoost model training (uses pretrained models for feature extraction)
@@ -2152,196 +2153,24 @@ def stage5_train_models(
             # Train model with best hyperparameters (reuse same training code as grid search)
             try:
                 if is_pytorch_model(model_type):
-                    # PyTorch model training with best hyperparameters
-                    from lib.models import VideoDataset
-                    from lib.models.video import variable_ar_collate
-                    
-                    train_dataset = VideoDataset(train_df, project_root=project_root_str, config=video_config)
-                    val_dataset = VideoDataset(val_df, project_root=project_root_str, config=video_config)
-                    
-                    use_cuda = torch.cuda.is_available()
-                    num_workers = final_config.get("num_workers", model_config.get("num_workers", 0))
-                    batch_size = final_config.get("batch_size", model_config.get("batch_size", 8))
-                    gradient_accumulation_steps = final_config.get("gradient_accumulation_steps", model_config.get("gradient_accumulation_steps", 1))
-                    
-                    # CRITICAL: Force smaller batch sizes for memory-intensive models to prevent OOM
-                    # These models process many frames (1000) at high resolution, requiring conservative batch sizes
-                    
-                    if model_type in MEMORY_INTENSIVE_MODELS_BATCH_LIMITS:
-                        max_batch_size = MEMORY_INTENSIVE_MODELS_BATCH_LIMITS[model_type]
-                        if batch_size > max_batch_size:
-                            # Calculate effective batch size before reduction
-                            effective_batch_size = batch_size * gradient_accumulation_steps
-                            logger.warning(
-                                f"{model_type} model requires batch_size<={max_batch_size} to prevent OOM. "
-                                f"Overriding batch_size from {batch_size} to {max_batch_size}. "
-                                f"Adjusting gradient_accumulation_steps to maintain effective batch size of {effective_batch_size}."
-                            )
-                            # Increase gradient accumulation to maintain effective batch size
-                            gradient_accumulation_steps = (effective_batch_size + max_batch_size - 1) // max_batch_size
-                            batch_size = max_batch_size
-                    
-                    train_loader = DataLoader(
-                        train_dataset, batch_size=batch_size, shuffle=True,
-                        num_workers=num_workers, pin_memory=use_cuda,
-                        persistent_workers=num_workers > 0,
-                        prefetch_factor=2 if num_workers > 0 else None,
-                        collate_fn=variable_ar_collate
+                    # Use extracted helper function for PyTorch model training
+                    result = _train_pytorch_model_fold(
+                        model_type=model_type,
+                        model_config=model_config,  # Base config
+                        train_df=train_df,
+                        val_df=val_df,
+                        project_root_str=project_root_str,
+                        fold_idx=fold_idx,
+                        model_output_dir=model_output_dir,
+                        video_config=video_config,
+                        hyperparams=best_params,  # Best params from grid search
+                        is_grid_search=False,
+                        param_fold_results=None,
+                        fold_results=fold_results,
+                        use_tracking=use_tracking,
+                        use_mlflow=use_mlflow,
+                        param_idx=None,
                     )
-                    val_loader = DataLoader(
-                        val_dataset, batch_size=batch_size, shuffle=False,
-                        num_workers=num_workers, pin_memory=use_cuda,
-                        persistent_workers=num_workers > 0,
-                        prefetch_factor=2 if num_workers > 0 else None,
-                        collate_fn=variable_ar_collate
-                    )
-                    
-                    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                    
-                    # CRITICAL: Apply PyTorch memory optimizations to prevent GPU memory from being hogged
-                    if device.type == "cuda":
-                        # Set CUDA memory allocator to use expandable segments (reduces fragmentation)
-                        if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
-                            os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-                        
-                        # Disable cuDNN benchmark to reduce memory usage (trade-off: slightly slower)
-                        torch.backends.cudnn.benchmark = False
-                        
-                        # Clear cache before model creation
-                        torch.cuda.empty_cache()
-                        torch.cuda.synchronize()
-                        aggressive_gc(clear_cuda=True)
-                        logger.info("Applied PyTorch memory optimizations: expandable_segments, cudnn.benchmark=False")
-                    
-                    model = create_model(model_type, final_config)
-                    model = model.to(device)
-                    
-                    optim_cfg = OptimConfig(
-                        lr=final_config.get("learning_rate", model_config.get("learning_rate", 1e-4)),
-                        weight_decay=final_config.get("weight_decay", model_config.get("weight_decay", 1e-4)),
-                        max_grad_norm=final_config.get("max_grad_norm", model_config.get("max_grad_norm", 1.0)),
-                        backbone_lr=final_config.get("backbone_lr", model_config.get("backbone_lr", None)),
-                        head_lr=final_config.get("head_lr", model_config.get("head_lr", None)),
-                    )
-                    train_cfg = TrainConfig(
-                        num_epochs=final_config.get("num_epochs", model_config.get("num_epochs", 20)),
-                        device=str(device),
-                        log_interval=model_config.get("log_interval", 10),
-                        use_class_weights=model_config.get("use_class_weights", True),
-                        use_amp=model_config.get("use_amp", True),
-                        gradient_accumulation_steps=gradient_accumulation_steps,
-                        early_stopping_patience=model_config.get("early_stopping_patience", 5),
-                        scheduler_type=model_config.get("scheduler_type", "cosine"),
-                        warmup_epochs=model_config.get("warmup_epochs", 2),
-                        warmup_factor=model_config.get("warmup_factor", 0.1),
-                        log_grad_norm=model_config.get("log_grad_norm", False),
-                    )
-                    
-                    use_differential_lr = model_type in [
-                        "i3d", "r2plus1d", "slowfast", "x3d", "pretrained_inception",
-                        "vit_gru", "vit_transformer"
-                    ]
-                    
-                    fold_output_dir = model_output_dir / f"fold_{fold_idx + 1}"
-                    fold_output_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    # Note: Fold deletion already handled above before the resume check
-                    
-                    if use_tracking:
-                        tracker = ExperimentTracker(str(fold_output_dir))
-                    run_id = f"{model_type}_fold{fold_idx + 1}_final"
-                    ckpt_manager = CheckpointManager(str(fold_output_dir), run_id=run_id)
-                    
-                    mlflow_tracker = None
-                    if use_mlflow and MLFLOW_AVAILABLE:
-                        try:
-                            # End any existing MLflow run before creating a new one
-                            try:
-                                import mlflow
-                                if mlflow.active_run() is not None:
-                                    mlflow.end_run()
-                                    logger.debug("Ended existing MLflow run before creating new one")
-                            except Exception:
-                                pass  # Ignore errors when ending runs
-                            
-                            mlflow_tracker = create_mlflow_tracker(
-                                experiment_name=f"{model_type}",
-                                use_mlflow=True
-                            )
-                            if mlflow_tracker:
-                                mlflow_tracker.log_config(final_config)
-                                mlflow_tracker.set_tag("fold", str(fold_idx + 1))
-                                mlflow_tracker.set_tag("model_type", model_type)
-                                mlflow_tracker.set_tag("phase", "final_training")
-                        except Exception as e:
-                            logger.warning(f"Failed to create MLflow tracker: {e}")
-                    
-                    logger.info(f"Training PyTorch model {model_type} on fold {fold_idx + 1} (full dataset)...")
-                    
-                    # Clear cache before training
-                    if device.type == "cuda":
-                        torch.cuda.empty_cache()
-                    
-                    model = fit(model, train_loader, val_loader, optim_cfg, train_cfg, use_differential_lr=use_differential_lr)
-                    
-                    # Clear cache before evaluation
-                    if device.type == "cuda":
-                        torch.cuda.empty_cache()
-                    
-                    from lib.training.trainer import evaluate
-                    val_metrics = evaluate(model, val_loader, device=str(device))
-                    
-                    val_loss = val_metrics["loss"]
-                    val_acc = val_metrics["accuracy"]
-                    val_f1 = val_metrics["f1"]
-                    val_precision = val_metrics["precision"]
-                    val_recall = val_metrics["recall"]
-                    per_class = val_metrics["per_class"]
-                    
-                    result = {
-                        "fold": fold_idx + 1,
-                        "val_loss": val_loss,
-                        "val_acc": val_acc,
-                        "val_f1": val_f1,
-                        "val_precision": val_precision,
-                        "val_recall": val_recall,
-                        "val_f1_class0": per_class.get("0", {}).get("f1", 0.0),
-                        "val_precision_class0": per_class.get("0", {}).get("precision", 0.0),
-                        "val_recall_class0": per_class.get("0", {}).get("recall", 0.0),
-                        "val_f1_class1": per_class.get("1", {}).get("f1", 0.0),
-                        "val_precision_class1": per_class.get("1", {}).get("precision", 0.0),
-                        "val_recall_class1": per_class.get("1", {}).get("recall", 0.0),
-                    }
-                    if best_params:
-                        result.update(best_params)
-                    fold_results.append(result)
-                    
-                    logger.info(
-                        f"Fold {fold_idx + 1} - Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, "
-                        f"Val F1: {val_f1:.4f}, Val Precision: {val_precision:.4f}, Val Recall: {val_recall:.4f}"
-                    )
-                    
-                    model.eval()
-                    model_path = fold_output_dir / "model.pt"
-                    torch.save(model.state_dict(), model_path)
-                    logger.info(f"Saved model to {model_path}")
-                    
-                    # Aggressive GC after saving model
-                    if device.type == "cuda":
-                        torch.cuda.empty_cache()
-                        aggressive_gc(clear_cuda=True)
-                    
-                    if mlflow_tracker:
-                        try:
-                            mlflow_tracker.log_metrics({
-                                "val_loss": val_loss, "val_acc": val_acc, "val_f1": val_f1,
-                                "val_precision": val_precision, "val_recall": val_recall
-                            }, step=fold_idx + 1)
-                        except Exception as e:
-                            logger.warning(f"Failed to log to MLflow: {e}")
-                    
-                    cleanup_model_and_memory(model=model, device=device, clear_cuda=device.type == "cuda")
-                    aggressive_gc(clear_cuda=device.type == "cuda")
                     
                 elif is_xgboost_model(model_type):
                     # XGBoost model training with best hyperparameters
