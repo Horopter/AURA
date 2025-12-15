@@ -596,7 +596,7 @@ def download_pretrained_models(model_types: List[str]) -> Dict[str, bool]:
                 except Exception as e:
                     logger.error("✗ Failed to download SlowFast weights: %s", e)
                     results[model_type] = False
-
+            
             elif model_type == "x3d":
                 # X3D requires actual X3D model (no fallback)
                 try:

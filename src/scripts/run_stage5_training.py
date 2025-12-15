@@ -490,6 +490,5 @@ if __name__ == "__main__":
         raise
     except Exception:
         # Last resort: force exit
-        import os
         os._exit(1)
 

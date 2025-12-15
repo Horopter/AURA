@@ -325,7 +325,6 @@ class TestMaybeLimitToSmallTestSubset:
     def test_limit_applied(self, sample_video_df):
         """Test that limit is applied correctly."""
         # Set test mode via environment variable
-        import os
         os.environ["FVC_TEST_MODE"] = "1"
         try:
             result = maybe_limit_to_small_test_subset(
@@ -339,7 +338,6 @@ class TestMaybeLimitToSmallTestSubset:
     
     def test_balanced_limiting(self):
         """Test that limiting maintains balance."""
-        import os
         os.environ["FVC_TEST_MODE"] = "1"
         try:
             # Create balanced dataset
@@ -366,7 +364,6 @@ class TestMaybeLimitToSmallTestSubset:
     
     def test_limit_larger_than_dataset(self, sample_video_df):
         """Test when limit is larger than dataset."""
-        import os
         os.environ["FVC_TEST_MODE"] = "1"
         try:
             result = maybe_limit_to_small_test_subset(
@@ -380,7 +377,6 @@ class TestMaybeLimitToSmallTestSubset:
     
     def test_empty_dataset(self):
         """Test with empty dataset."""
-        import os
         os.environ["FVC_TEST_MODE"] = "1"
         try:
             df = pl.DataFrame({"video_path": [], "label": []})

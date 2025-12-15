@@ -1,201 +1,176 @@
-# Model Presentation Notebooks
+# FVC Deepfake Detection: Comprehensive Notebook Collection
 
-This directory contains Jupyter notebooks for presenting and demonstrating the complete deepfake detection pipeline and all trained models.
-
-## Master Pipeline Notebook
-
-**Start here**: [`00_MASTER_PIPELINE_JOURNEY.ipynb`](00_MASTER_PIPELINE_JOURNEY.ipynb)
-
-This comprehensive notebook demonstrates the **complete end-to-end journey** from raw ZIP files to production-ready models, including:
-
-- **Data Extraction**: From password-protected ZIP archives to organized datasets
-- **Data Exploration**: Understanding dataset characteristics, class distribution, video statistics
-- **Stage 1: Augmentation**: Spatial and temporal augmentation strategies, pre-generation rationale
-- **Stage 2: Feature Extraction**: Handcrafted features (noise residual, DCT, blur/sharpness, codec cues)
-- **Stage 3: Video Scaling**: Letterbox resizing, upscaling/downscaling strategies
-- **Stage 4: Scaled Features**: Feature extraction from scaled videos
-- **Stage 5: Model Training**: 23 different architectures with hyperparameter tuning
-- **MLOps Infrastructure**: MLflow experiment tracking, DuckDB analytics, Airflow orchestration
-- **Results & Insights**: Performance analysis, key findings, next steps
-
-**Technologies Demonstrated**:
-- PyTorch, torchvision, timm (Deep Learning)
-- Polars, PyArrow, DuckDB (Data Processing)
-- MLflow (Experiment Tracking)
-- Apache Airflow (Orchestration)
-- PyAV, OpenCV (Video Processing)
-
-This notebook is designed for **ML Engineers, Data Scientists, and Researchers** at a **production-grade level**.
-
-## Overview
-
-Each notebook is designed for **presentation purposes** - they load and display trained models, show examples with sample videos, and present results. **They do NOT train models** - training instructions are provided in commented markdown sections.
+This directory contains **presentation-quality notebooks** demonstrating the complete machine learning pipeline for deepfake video detection, from raw ZIP archives to production-ready models.
 
 ## Notebook Structure
 
-Each notebook follows this structure:
+### Master Pipeline Journey
+- **`00_MASTER_PIPELINE_JOURNEY.ipynb`**: Complete end-to-end pipeline demonstration
+  - Infrastructure & requirements
+  - Data extraction & exploration
+  - All 5 pipeline stages with technical rationale
+  - MLOps integration (MLflow, DuckDB, Airflow)
+  - Feature preprocessing (imputation, scaling, normalization)
+  - Model evaluation & results
 
-1. **Model Overview**: Description of the model architecture and approach
-2. **Training Instructions**: Commented code showing how to train the model
-3. **Setup**: Import libraries and configure paths
-4. **Check for Saved Models**: Verify that trained models exist
-5. **Load Model**: Load the trained model from disk
-6. **Display Sample Videos**: Show example videos with thumbnails
-7. **Model Performance Summary**: Display metrics and visualizations
-8. **Model Architecture Summary**: Detailed architecture description
+### Individual Model Notebooks (5c-5u)
 
-## Available Notebooks
+Each model notebook includes:
+- ✅ **Architecture Deep-Dive**: Mathematical foundations, implementation details
+- ✅ **Training Methodology**: 5-fold CV, hyperparameter optimization, regularization
+- ✅ **MLOps Integration**: MLflow tracking, DuckDB analytics, Airflow orchestration
+- ✅ **Model Checkpoint Verification**: Checks for saved models before demonstration
+- ✅ **Video Demonstrations**: Sample video loading and display
+- ✅ **Commented Training Code**: Shows how to train (commented to prevent accidental training)
+- ✅ **Results Visualization**: Performance metrics, confusion matrices, fold analysis
 
-### Standalone Training Scripts
-- **5alpha_sklearn_logreg.ipynb**: sklearn LogisticRegression (standalone implementation)
-- **5beta_gradient_boosting.ipynb**: Gradient Boosting models (XGBoost, LightGBM, CatBoost)
+**Model Notebooks**:
+- **5c**: `5c_naive_cnn.ipynb` - Naive CNN baseline
+- **5d**: `5d_pretrained_inception.ipynb` - Pretrained Inception (R3D-18)
+- **5e**: `5e_variable_ar_cnn.ipynb` - Variable AR CNN
+- **5f**: `5f_xgboost_pretrained_inception.ipynb` - XGBoost + Pretrained Inception
+- **5g**: `5g_xgboost_i3d.ipynb` - XGBoost + I3D
+- **5h**: `5h_xgboost_r2plus1d.ipynb` - XGBoost + R(2+1)D
+- **5i**: `5i_xgboost_vit_gru.ipynb` - XGBoost + ViT-GRU
+- **5j**: `5j_xgboost_vit_transformer.ipynb` - XGBoost + ViT-Transformer
+- **5k**: `5k_vit_gru.ipynb` - ViT-GRU
+- **5l**: `5l_vit_transformer.ipynb` - ViT-Transformer
+- **5m**: `5m_timesformer.ipynb` - TimeSformer
+- **5n**: `5n_vivit.ipynb` - ViViT
+- **5o**: `5o_i3d.ipynb` - I3D
+- **5p**: `5p_r2plus1d.ipynb` - R(2+1)D
+- **5q**: `5q_x3d.ipynb` - X3D
+- **5r**: `5r_slowfast.ipynb` - SlowFast
+- **5s**: `5s_slowfast_attention.ipynb` - SlowFast with Attention
+- **5t**: `5t_slowfast_multiscale.ipynb` - Multi-Scale SlowFast
+- **5u**: `5u_two_stream.ipynb` - Two-Stream
 
-### Baseline Models (Feature-Based)
-- **5a_logistic_regression.ipynb**: Logistic Regression classifier
-- **5b_svm.ipynb**: Support Vector Machine classifier
+## Key Features
 
-### PyTorch CNN Models
-- **5c_naive_cnn.ipynb**: Simple 3D CNN
-- **5d_pretrained_inception.ipynb**: Pretrained R3D-18 with Inception blocks
-- **5e_variable_ar_cnn.ipynb**: Variable aspect ratio CNN
+### Comprehensive Technical Coverage
 
-### XGBoost Models (Feature Extraction + Classification)
-- **5f_xgboost_pretrained_inception.ipynb**: XGBoost with Pretrained Inception features
-- **5g_xgboost_i3d.ipynb**: XGBoost with I3D features
-- **5h_xgboost_r2plus1d.ipynb**: XGBoost with R(2+1)D features
-- **5i_xgboost_vit_gru.ipynb**: XGBoost with ViT-GRU features
-- **5j_xgboost_vit_transformer.ipynb**: XGBoost with ViT-Transformer features
+**Data Engineering**:
+- ZIP archive extraction and validation
+- Data exploration with statistical analysis
+- Video metadata extraction (duration, fps, resolution, codec)
 
-### Vision Transformer Models
-- **5k_vit_gru.ipynb**: ViT backbone + GRU temporal head
-- **5l_vit_transformer.ipynb**: ViT backbone + Transformer encoder temporal head
+**Feature Engineering**:
+- Handcrafted features (noise residual, DCT, blur/sharpness, codec cues)
+- Feature preprocessing (imputation, scaling, normalization, collinearity removal)
+- Rationale for each feature type
 
-### Video Transformer Models
-- **5m_timesformer.ipynb**: TimeSformer with divided space-time attention
-- **5n_vivit.ipynb**: ViViT with tubelet embedding
+**Model Architecture**:
+- 23 diverse models from baselines to state-of-the-art
+- Detailed architecture explanations
+- Implementation locations and code references
 
-### 3D CNN Models
-- **5o_i3d.ipynb**: I3D (Inflated 3D ConvNet)
-- **5p_r2plus1d.ipynb**: R(2+1)D (Factorized 3D Convolutions)
-- **5q_x3d.ipynb**: X3D (Efficient video model)
+**Training Methodology**:
+- 5-fold stratified cross-validation (with rationale)
+- Hyperparameter optimization (grid search on sample)
+- Regularization (L2, dropout, batch norm, gradient clipping)
+- Optimization (AdamW, cosine annealing, mixed precision, gradient accumulation)
+- Activation functions (ReLU, GELU, Sigmoid)
 
-### SlowFast Models
-- **5r_slowfast.ipynb**: SlowFast dual-pathway architecture
-- **5s_slowfast_attention.ipynb**: SlowFast with attention mechanisms
-- **5t_slowfast_multiscale.ipynb**: Multi-scale SlowFast
+**MLOps Infrastructure**:
+- **MLflow**: Experiment tracking, model registry, artifact management
+- **DuckDB**: Fast SQL queries on training results
+- **Airflow**: Pipeline orchestration with dependency management
+- **Custom MLOps**: ExperimentTracker, CheckpointManager, RunConfig
 
-### Two-Stream Models
-- **5u_two_stream.ipynb**: Two-stream network (RGB + optical flow)
+### Production-Grade Practices
+
+- ✅ Error handling and validation
+- ✅ Checkpointing and resume capability
+- ✅ Reproducibility (fixed seeds, deterministic operations)
+- ✅ Memory optimization (chunked processing, frame-by-frame decoding)
+- ✅ Model verification (ensures proper implementations, no fallbacks)
 
 ## Usage
 
-### Prerequisites
-
-1. Trained models must exist:
-   - **5alpha**: `data/stage5/sklearn_logreg/model.joblib` (single model, not in fold subdirectories)
-   - **5beta**: `data/stage5/{model_name}/model.json` (XGBoost), `model.joblib` (LightGBM), or `model.cbm` (CatBoost)
-   - **5a-5u**: `data/stage5/{model_type}/fold_*/model.pt` (PyTorch) or `model.joblib` (XGBoost/sklearn)
-2. Scaled video metadata at `data/stage3/scaled_metadata.parquet`
-3. Feature metadata (for baseline models) at `data/stage2/features_metadata.parquet`
-
-### Running a Notebook
+### Viewing Notebooks
 
 ```bash
 # Start Jupyter
-jupyter notebook
+jupyter notebook src/notebooks/
 
-# Or use JupyterLab
-jupyter lab
-
-# Navigate to src/notebooks/ and open the desired notebook
+# Or JupyterLab
+jupyter lab src/notebooks/
 ```
 
-### Example: Viewing Model 5r (SlowFast)
+### Running Demonstrations
 
-1. Open `5r_slowfast.ipynb`
-2. Run all cells (Cell → Run All)
-3. The notebook will:
-   - Check for saved SlowFast models
-   - Load the model if available
-   - Display sample videos
-   - Show performance metrics
-   - Present architecture details
+1. **Start with Master Pipeline**: `00_MASTER_PIPELINE_JOURNEY.ipynb`
+   - Complete overview of the entire pipeline
+   - Technical rationale for all decisions
+   - Infrastructure integration
 
-## Model Locations
+2. **Explore Individual Models**: Open any `5*.ipynb` notebook
+   - Architecture details
+   - Training methodology
+   - MLOps integration
+   - Model checkpoint verification
 
-Models are saved in the following structure:
+### Training Models
 
-**5alpha (sklearn_logreg):**
-```
-data/stage5/sklearn_logreg/
-├── model.joblib
-├── scaler.joblib
-├── metrics.json
-└── roc_pr_curves.png
-```
+**Note**: Notebooks show training code but it's commented out to prevent accidental training.
 
-**5beta (gradient boosting):**
-```
-data/stage5/
-├── xgboost/
-│   ├── model.json
-│   ├── metrics.json
-│   └── ...
-├── lightgbm/
-│   ├── model.joblib
-│   ├── metrics.json
-│   └── ...
-└── catboost/
-    ├── model.cbm
-    ├── metrics.json
-    └── ...
+To actually train models, use:
+```bash
+# SLURM scripts
+sbatch src/scripts/slurm_stage5c.sh  # For model 5c, etc.
+
+# Or Python API (see commented code in notebooks)
 ```
 
-**5a-5u (pipeline models):**
-```
-data/stage5/
-├── {model_type}/
-│   ├── fold_1/
-│   │   ├── model.pt (or model.joblib)
-│   │   ├── metrics.json
-│   │   └── ...
-│   ├── fold_2/
-│   └── ...
-```
+## Technical Highlights
 
-## Training Models
+### Why These Notebooks Are Production-Quality
 
-To train models, use the provided SLURM scripts or Python API:
+1. **Complete Journey**: From ZIP files → trained models → deployment
+2. **Technical Depth**: Explains WHY, not just WHAT
+3. **MLOps Integration**: MLflow, Airflow, DuckDB prominently featured
+4. **Best Practices**: 5-fold CV, hyperparameter optimization, regularization
+5. **Infrastructure**: Shows use of modern ML infrastructure
+6. **Reproducibility**: Fixed seeds, deterministic operations
+7. **Error Handling**: Robust validation and error messages
+8. **Model Verification**: Ensures proper implementations (no fallbacks)
+
+### What Makes This Professional
+
+- **Mathematical Foundations**: Explains formulas and theory
+- **Design Rationale**: Why each decision was made
+- **Trade-off Analysis**: Pros/cons of different approaches
+- **Industry Standards**: Follows ML best practices
+- **Infrastructure Integration**: MLOps tools properly showcased
+- **Production Considerations**: Deployment, monitoring, scalability
+
+## Notebook Generation
+
+Notebooks are generated using `generate_model_notebooks.py`:
 
 ```bash
-# Using SLURM scripts
-sbatch src/scripts/slurm_stage5a.sh  # Train logistic regression
-sbatch src/scripts/slurm_stage5r.sh  # Train SlowFast
-# ... etc
-
-# Using Python API (see training instructions in each notebook)
-from lib.training.pipeline import stage5_train_models
-results = stage5_train_models(...)
+python3 src/notebooks/generate_model_notebooks.py
 ```
 
-## Notes
+This ensures consistency across all model notebooks and makes updates easy.
 
-- **These notebooks are for presentation only** - they load existing models, not train new ones
-- Training instructions are provided in commented markdown sections
-- Sample videos are displayed as thumbnails (first frame)
-- To play full videos, use: `display(Video('path/to/video.mp4', embed=True))`
-- Metrics are loaded from `metrics.json` files in each fold directory
+## Requirements
 
-## Troubleshooting
+All notebooks require:
+- Python 3.10+
+- Jupyter/IPython
+- Project dependencies (see `requirements.txt`)
+- Trained models (for demonstration sections)
 
-### "No trained models found"
-- Ensure models have been trained first using the SLURM scripts
-- Check that `data/stage5/{model_type}/fold_*/model.pt` (or `model.joblib`) exists
+## Next Steps
 
-### "Could not load metadata files"
-- Ensure Stage 3 scaled metadata exists: `data/stage3/scaled_metadata.parquet`
-- For baseline models, ensure Stage 2 features exist: `data/stage2/features_metadata.parquet`
+1. **Review Master Pipeline**: Understand the complete journey
+2. **Explore Model Notebooks**: Deep-dive into specific architectures
+3. **Check MLflow UI**: Compare experiments across models
+4. **Use DuckDB**: Run custom analytics queries
+5. **Deploy Best Model**: Use MLflow Model Registry for production
 
-### Import errors
-- Ensure project root is correctly set in the notebook
-- Run the setup cell first to add project root to Python path
+---
+
+**Target Audience**: ML Engineers, Research Scientists, Hiring Managers  
+**Level**: Production-Grade, Research-Quality Implementation
