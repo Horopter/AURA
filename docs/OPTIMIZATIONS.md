@@ -1,6 +1,6 @@
 # Pipeline Optimizations
 
-This document describes all optimizations implemented across the FVC pipeline, including memory optimizations, MLOps improvements, and system enhancements.
+This document describes all optimizations implemented across the AURA pipeline, including memory optimizations, MLOps improvements, and system enhancements.
 
 ## Memory Optimizations
 

@@ -1,6 +1,6 @@
 # AURA Training Results Dashboard
 
-A Streamlit-based interactive dashboard for visualizing and analyzing training results from the 5-stage FVC pipeline.
+A Streamlit-based interactive dashboard for visualizing and analyzing training results from the 5-stage AURA pipeline.
 
 ## Features
 

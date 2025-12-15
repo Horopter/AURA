@@ -1,6 +1,6 @@
 # Stage-Wise Pipeline Scripts
 
-This directory contains individual scripts to run each stage of the FVC pipeline independently. This allows for:
+This directory contains individual scripts to run each stage of the AURA pipeline independently. This allows for:
 - Running stages in parallel (if dependencies allow)
 - Resuming from a specific stage
 - Debugging individual stages

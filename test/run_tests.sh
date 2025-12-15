@@ -4,7 +4,7 @@
 set -e
 
 echo "=========================================="
-echo "Running FVC Unit Tests"
+echo "Running AURA Unit Tests"
 echo "=========================================="
 
 # Check if pytest is installed

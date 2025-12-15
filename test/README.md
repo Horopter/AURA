@@ -1,6 +1,6 @@
 # AURA Unit Tests
 
-Comprehensive unit test suite for the FVC video classifier project.
+Comprehensive unit test suite for the AURA (Authenticity Understanding of Real vs Artificial) project.
 
 ## Structure
 

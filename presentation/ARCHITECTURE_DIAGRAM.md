@@ -6,7 +6,7 @@ This document provides detailed ASCII/text diagrams of the 5-stage pipeline arch
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         FVC 5-STAGE PIPELINE                            │
+│                         AURA 5-STAGE PIPELINE                           │
 └─────────────────────────────────────────────────────────────────────────┘
 
 N original videos (298)
