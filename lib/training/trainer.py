@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple, Iterable, Dict, Any
+from typing import Optional, Tuple, Iterable, Dict, Any, TYPE_CHECKING
 import numpy as np
 import torch
 import torch.nn as nn
@@ -22,6 +22,9 @@ from torch.optim import Optimizer, AdamW
 from torch.optim.lr_scheduler import _LRScheduler, StepLR, CosineAnnealingLR, LambdaLR
 from torch.utils.data import DataLoader, WeightedRandomSampler
 # VariableARVideoModel import removed - not needed (freeze_backbone_unfreeze_head uses generic nn.Module)
+
+if TYPE_CHECKING:
+    from lib.mlops.config import ExperimentTracker
 
 logger = logging.getLogger(__name__)
 
@@ -851,6 +854,7 @@ def fit(
     train_cfg: TrainConfig,
     use_differential_lr: bool = False,
     hyper_aggressive_gc: Optional[bool] = None,  # Enable hyper-aggressive GC for memory-intensive models (X3D, SlowFast)
+    tracker: Optional['ExperimentTracker'] = None,  # Optional ExperimentTracker for logging metrics
 ) -> nn.Module:
     """
     High-level training loop with optional validation.
@@ -862,6 +866,8 @@ def fit(
         optim_cfg: Optimizer configuration
         train_cfg: Training configuration
         use_differential_lr: Use different LRs for backbone and head (for pretrained models)
+        hyper_aggressive_gc: Enable hyper-aggressive GC for memory-intensive models
+        tracker: Optional ExperimentTracker for logging metrics to metrics.jsonl
     
     Returns:
         Trained model
@@ -941,6 +947,13 @@ def fit(
                 f"Epoch {epoch}/{train_cfg.num_epochs}, Train Loss: {train_loss:.4f}, LR: {current_lr:.2e}"
             )
             
+            # Log training metrics to tracker if available
+            if tracker is not None:
+                try:
+                    tracker.log_epoch_metrics(epoch, {"loss": train_loss}, phase="train")
+                except Exception as e:
+                    logger.debug(f"Failed to log training metrics: {e}")
+            
             # Validate
             if val_loader is not None:
                 # Ensure model is in eval mode (BatchNorm uses running stats, Dropout disabled)
@@ -955,6 +968,23 @@ def fit(
                     f"Epoch {epoch}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, "
                     f"Val F1: {val_f1:.4f}, Val Precision: {val_precision:.4f}, Val Recall: {val_recall:.4f}"
                 )
+                
+                # Log validation metrics to tracker if available
+                if tracker is not None:
+                    try:
+                        tracker.log_epoch_metrics(
+                            epoch, 
+                            {
+                                "loss": val_loss,
+                                "accuracy": val_acc,
+                                "f1": val_f1,
+                                "precision": val_precision,
+                                "recall": val_recall,
+                            }, 
+                            phase="val"
+                        )
+                    except Exception as e:
+                        logger.debug(f"Failed to log validation metrics: {e}")
                 
                 # Early stopping check
                 if early_stopping is not None:

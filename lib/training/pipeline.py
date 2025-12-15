@@ -900,6 +900,7 @@ def _train_pytorch_model_fold(
                 train_cfg,
                 use_differential_lr=use_differential_lr,
                 hyper_aggressive_gc=hyper_aggressive_gc,
+                tracker=tracker,  # Pass tracker to log metrics during training
             )
             
             if device.type == "cuda":
@@ -1012,9 +1013,15 @@ def _train_pytorch_model_fold(
                 mlflow_metrics[f"val_f1_class{class_idx}"] = metrics["f1"]
             
             mlflow_tracker.log_metrics(mlflow_metrics, step=fold_idx + 1)
-            mlflow_tracker.log_artifact(str(model_path), artifact_path="models")
+            
+            # Log artifact - check if file exists first
+            if model_path.exists() and model_path.stat().st_size > 0:
+                mlflow_tracker.log_artifact(str(model_path), artifact_path="models")
+                logger.info(f"Logged model artifact to MLflow: {model_path.name}")
+            else:
+                logger.warning(f"Model file not found or empty, skipping artifact logging: {model_path}")
         except (RuntimeError, ValueError, AttributeError) as e:
-            logger.warning(f"Failed to log to MLflow: {e}")
+            logger.error(f"Failed to log to MLflow: {e}", exc_info=True)
     
     result = {
         "fold": fold_idx + 1,
@@ -1046,11 +1053,34 @@ def _train_pytorch_model_fold(
                 f"Recall: {metrics['recall']:.4f}, F1: {metrics['f1']:.4f}"
             )
     
+    # Ensure final validation metrics are saved to metrics.jsonl even if training was skipped
+    if tracker is not None:
+        try:
+            # Log final validation metrics (epoch 0 indicates final evaluation, not training epoch)
+            tracker.log_epoch_metrics(
+                0,  # Use epoch 0 to indicate final metrics
+                {
+                    "loss": val_loss,
+                    "accuracy": val_acc,
+                    "f1": val_f1,
+                    "precision": val_precision,
+                    "recall": val_recall,
+                },
+                phase="val"
+            )
+            logger.debug(f"Saved final validation metrics to {tracker.metrics_file}")
+        except Exception as e:
+            logger.debug(f"Failed to save final validation metrics: {e}")
+    
     if mlflow_tracker is not None:
         try:
+            # Ensure artifacts are flushed before ending run
+            import mlflow
+            if mlflow.active_run() is not None:
+                mlflow.flush()
             mlflow_tracker.end_run()
         except (RuntimeError, AttributeError, ValueError) as cleanup_error:
-            logger.debug(f"Error ending MLflow run: {cleanup_error}")
+            logger.warning(f"Error ending MLflow run: {cleanup_error}")
     
     cleanup_model_and_memory(model=model, device=device, clear_cuda=device.type == "cuda")
     aggressive_gc(clear_cuda=device.type == "cuda")

@@ -8,12 +8,12 @@
 #   sbatch scripts/slurm_jobs/slurm_stage5_naive_cnn.sh
 
 #SBATCH --job-name=fvc_stage5c
-#SBATCH --account=si670f25_class
+#SBATCH --account=eecs442f25_class
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
 #SBATCH --mem=64G
-#SBATCH --cpus-per-task=1
-#SBATCH --time=1-00:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --time=8:00:00
 #SBATCH --output=logs/stage5/stage5c-%j.out
 #SBATCH --error=logs/stage5/stage5c-%j.err
 #SBATCH --mail-user=santoshd@umich.edu,urvim@umich.edu,suzanef@umich.edu
