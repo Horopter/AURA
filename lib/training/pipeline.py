@@ -1101,7 +1101,8 @@ def _train_baseline_model_fold(
     hyperparams: Optional[Dict[str, Any]] = None,
     is_grid_search: bool = False,
     param_fold_results: Optional[List[Dict[str, Any]]] = None,
-    fold_results: Optional[List[Dict[str, Any]]] = None
+    fold_results: Optional[List[Dict[str, Any]]] = None,
+    use_tracking: bool = True
 ) -> Dict[str, Any]:
     """
     Train a baseline (sklearn) model on a single fold.
@@ -1129,6 +1130,12 @@ def _train_baseline_model_fold(
     
     fold_output_dir = model_output_dir / f"fold_{fold_idx + 1}"
     fold_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create tracker for metrics logging
+    tracker = None
+    if use_tracking:
+        from lib.mlops.config import ExperimentTracker
+        tracker = ExperimentTracker(str(fold_output_dir))
     
     result = None
     model = None
@@ -1269,6 +1276,24 @@ def _train_baseline_model_fold(
         # Save model
         model.save(str(fold_output_dir))
         logger.info(f"Saved baseline model to {fold_output_dir}")
+        
+        # Log final validation metrics to metrics.jsonl
+        if tracker is not None:
+            try:
+                tracker.log_epoch_metrics(
+                    0,  # Use epoch 0 to indicate final metrics (baseline models don't have epochs)
+                    {
+                        "loss": metrics["val_loss"],
+                        "accuracy": metrics["val_acc"],
+                        "f1": metrics["val_f1"],
+                        "precision": metrics["val_precision"],
+                        "recall": metrics["val_recall"],
+                    },
+                    phase="val"
+                )
+                logger.debug(f"Saved final validation metrics to {tracker.metrics_file}")
+            except Exception as e:
+                logger.debug(f"Failed to save final validation metrics: {e}")
     
     except Exception as e:
         logger.error(
@@ -1842,6 +1867,32 @@ def stage5_train_models(
                 if resume and not delete_existing and _is_fold_complete(fold_output_dir, model_type):
                     logger.info(f"Fold {fold_idx + 1} already trained (found existing model). Skipping.")
                     logger.info(f"To retrain this fold, use --delete-existing flag")
+                    # Try to load existing results and log metrics if tracking is enabled
+                    if use_tracking:
+                        try:
+                            from lib.mlops.config import ExperimentTracker
+                            tracker = ExperimentTracker(str(fold_output_dir))
+                            # Try to load existing metrics from metadata.json if available
+                            metadata_file = fold_output_dir / "metadata.json"
+                            if metadata_file.exists():
+                                import json
+                                with open(metadata_file, 'r') as f:
+                                    metadata = json.load(f)
+                                # Log final validation metrics (epoch 0 indicates final metrics)
+                                tracker.log_epoch_metrics(
+                                    0,
+                                    {
+                                        "loss": metadata.get("val_loss", 0.0),
+                                        "accuracy": metadata.get("val_acc", 0.0),
+                                        "f1": metadata.get("val_f1", 0.0),
+                                        "precision": metadata.get("val_precision", 0.0),
+                                        "recall": metadata.get("val_recall", 0.0),
+                                    },
+                                    phase="val"
+                                )
+                                logger.debug(f"Saved existing validation metrics to {tracker.metrics_file}")
+                        except Exception as e:
+                            logger.debug(f"Failed to load and log existing metrics: {e}")
                     continue
                 
                 train_df, val_df = grid_search_folds[fold_idx]
@@ -1911,7 +1962,8 @@ def stage5_train_models(
                             hyperparams=params,
                             is_grid_search=True,
                             param_fold_results=param_fold_results,
-                            fold_results=fold_results
+                            fold_results=fold_results,
+                            use_tracking=use_tracking
                         )
                     
                 except Exception as e:
@@ -2021,8 +2073,32 @@ def stage5_train_models(
             if resume and not delete_existing and _is_fold_complete(fold_output_dir, model_type):
                 logger.info(f"Final training fold {fold_idx + 1} already trained (found existing model). Skipping.")
                 logger.info(f"To retrain this fold, use --delete-existing flag")
-                # Try to load existing results if available
-                # For now, we'll skip and continue - the fold won't be in results
+                # Try to load existing results and log metrics if tracking is enabled
+                if use_tracking:
+                    try:
+                        from lib.mlops.config import ExperimentTracker
+                        tracker = ExperimentTracker(str(fold_output_dir))
+                        # Try to load existing metrics from metadata.json if available
+                        metadata_file = fold_output_dir / "metadata.json"
+                        if metadata_file.exists():
+                            import json
+                            with open(metadata_file, 'r') as f:
+                                metadata = json.load(f)
+                            # Log final validation metrics (epoch 0 indicates final metrics)
+                            tracker.log_epoch_metrics(
+                                0,
+                                {
+                                    "loss": metadata.get("val_loss", 0.0),
+                                    "accuracy": metadata.get("val_acc", 0.0),
+                                    "f1": metadata.get("val_f1", 0.0),
+                                    "precision": metadata.get("val_precision", 0.0),
+                                    "recall": metadata.get("val_recall", 0.0),
+                                },
+                                phase="val"
+                            )
+                            logger.debug(f"Saved existing validation metrics to {tracker.metrics_file}")
+                    except Exception as e:
+                        logger.debug(f"Failed to load and log existing metrics: {e}")
                 continue
             
             # Get the specific fold from full dataset
@@ -2092,7 +2168,8 @@ def stage5_train_models(
                         features_stage4_path=features_stage4_path,
                         hyperparams=best_params,
                         is_grid_search=False,
-                        fold_results=fold_results
+                        fold_results=fold_results,
+                        use_tracking=use_tracking
                     )
                     
             except Exception as e:

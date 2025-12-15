@@ -75,7 +75,11 @@ from lib.data import stratified_kfold
 from lib.utils.paths import load_metadata_flexible
 from lib.training.model_factory import create_model, get_model_config, is_pytorch_model
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
 # Set publication-quality style
@@ -159,17 +163,61 @@ def load_training_history(metrics_file: Path) -> Optional[Dict]:
 
 def load_model_from_fold(model_type: str, fold_dir: Path, project_root_str: str):
     """Load model from fold directory."""
-    pytorch_models = {
-        "naive_cnn", "pretrained_inception", "variable_ar_cnn", "vit_gru", 
-        "vit_transformer", "timesformer", "vivit", "i3d", "r2plus1d", 
-        "x3d", "slowfast", "slowfast_attention", "slowfast_multiscale", "two_stream"
-    }
-    
-    if model_type in pytorch_models:
-        # PyTorch models require VideoDataset - skip for now
-        return None, None
-    
     try:
+        if is_pytorch_model(model_type):
+            # PyTorch models - load checkpoint
+            import torch
+            from lib.training.model_factory import get_model_config
+            
+            model = create_model(model_type, get_model_config(model_type))
+            
+            # Look for checkpoint
+            checkpoint_path = fold_dir / "checkpoint.pt"
+            if not checkpoint_path.exists():
+                checkpoint_path = fold_dir / "model.pt"
+            
+            if checkpoint_path.exists():
+                checkpoint = torch.load(checkpoint_path, map_location='cpu')
+                if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                elif isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['state_dict'])
+                else:
+                    model.load_state_dict(checkpoint)
+                logger.debug(f"Loaded PyTorch model from {checkpoint_path}")
+                model.eval()
+                return model, None
+            else:
+                logger.warning(f"No checkpoint found for {model_type} in {fold_dir}")
+                return None, None
+        
+        # XGBoost and Sklearn models
+        xgb_file = fold_dir / "xgboost_model.json"
+        joblib_file = fold_dir / "model.joblib"
+        
+        # XGBoost models
+        if xgb_file.exists() or model_type.startswith("xgboost_"):
+            model = create_model(model_type, get_model_config(model_type))
+            model.load(str(fold_dir))
+            return model, None
+        
+        # Sklearn models
+        if joblib_file.exists() or model_type in {"logistic_regression", "svm", "sklearn_logreg"}:
+            import joblib
+            if joblib_file.exists():
+                model = joblib.load(joblib_file)
+            else:
+                model = create_model(model_type, get_model_config(model_type))
+                if hasattr(model, 'load'):
+                    model.load(str(fold_dir))
+            scaler_file = fold_dir / "scaler.joblib"
+            scaler = joblib.load(scaler_file) if scaler_file.exists() else None
+            return model, scaler
+        
+        return None, None
+    except Exception as e:
+        logger.debug(f"Error loading model from {fold_dir}: {e}")
+        return None, None
         xgb_file = fold_dir / "xgboost_model.json"
         joblib_file = fold_dir / "model.joblib"
         
@@ -202,8 +250,74 @@ def get_predictions_from_model(model, model_type: str, val_df: pl.DataFrame, pro
     """Get predictions from loaded model."""
     try:
         if is_pytorch_model(model_type):
-            logger.debug(f"PyTorch model {model_type} requires VideoDataset, skipping")
-            return None, None
+            # PyTorch models - use VideoDataset
+            import torch
+            from torch.utils.data import DataLoader
+            from lib.models import VideoDataset, VideoConfig
+            from lib.training.model_factory import get_model_config
+            
+            # Get video config
+            model_config = get_model_config(model_type)
+            video_config = VideoConfig(
+                num_frames=model_config.get("num_frames", 8),
+                frame_size=model_config.get("frame_size", 224),
+                temporal_stride=model_config.get("temporal_stride", 1),
+            )
+            
+            # Create dataset
+            val_dataset = VideoDataset(val_df, project_root=project_root_str, config=video_config)
+            
+            # Determine device
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model = model.to(device)
+            model.eval()
+            
+            # Create dataloader
+            loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=0)
+            
+            all_probs = []
+            with torch.no_grad():
+                for clips, _ in loader:
+                    clips = clips.to(device)
+                    
+                    # Forward pass
+                    if device == "cuda":
+                        try:
+                            with torch.amp.autocast(device_type='cuda'):
+                                logits = model(clips)
+                        except (AttributeError, TypeError):
+                            with torch.cuda.amp.autocast():
+                                logits = model(clips)
+                    else:
+                        logits = model(clips)
+                    
+                    # Convert to probabilities
+                    if logits.ndim == 1 or (logits.ndim == 2 and logits.shape[1] == 1):
+                        if logits.ndim == 2:
+                            logits = logits.squeeze(-1)
+                        probs_positive = torch.sigmoid(logits).cpu().numpy()
+                        probs = np.column_stack([1 - probs_positive, probs_positive])
+                    else:
+                        probs = torch.softmax(logits, dim=1).cpu().numpy()
+                    
+                    all_probs.append(probs)
+            
+            # Stack all probabilities
+            y_probs_all = np.vstack(all_probs)
+            # Extract positive class probability (class 1)
+            if y_probs_all.shape[1] > 1:
+                y_probs = y_probs_all[:, 1]
+            else:
+                y_probs = y_probs_all.flatten()
+            
+            # Get labels
+            labels = val_df["label"].to_list()
+            label_map = {label: idx for idx, label in enumerate(sorted(set(labels)))}
+            y_true = np.array([label_map[label] for label in labels])
+            
+            y_probs = np.clip(y_probs, 0.0, 1.0)
+            
+            return y_true, y_probs
         
         if hasattr(model, 'predict'):
             y_probs = model.predict(val_df, project_root=project_root_str)
@@ -223,7 +337,9 @@ def get_predictions_from_model(model, model_type: str, val_df: pl.DataFrame, pro
             logger.debug(f"Model {model_type} does not have predict method")
             return None, None
     except Exception as e:
-        logger.debug(f"Error getting predictions: {e}")
+        logger.warning(f"Error getting predictions from {model_type}: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
         return None, None
 
 
@@ -419,11 +535,15 @@ def process_model(model_type: str, output_dir: Path):
         logger.warning(f"Model directory not found: {model_dir}")
         return False
     
+    logger.info(f"Model directory: {model_dir}")
+    
     # Create output directory for this model
     model_output_dir = output_dir / model_type
     model_output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Output directory: {model_output_dir}")
     
     # Load metadata for CV splits
+    logger.info("Step 1/5: Loading metadata...")
     metadata_paths = [
         project_root / "data" / "features_stage4" / "features_scaled_metadata.arrow",
         project_root / "data" / "features_stage4" / "features_scaled_metadata.parquet",
@@ -435,26 +555,32 @@ def process_model(model_type: str, output_dir: Path):
     metadata_df = None
     for path in metadata_paths:
         if path.exists():
+            logger.info(f"  Found metadata: {path}")
             metadata_df = load_metadata_flexible(str(path))
             if metadata_df is not None:
-                logger.info(f"Loaded metadata from: {path.name}")
+                logger.info(f"  ✓ Loaded {metadata_df.height} samples from {path.name}")
                 break
     
     if metadata_df is None:
-        logger.warning(f"Could not load metadata for {model_type}")
+        logger.warning(f"  ✗ Could not load metadata for {model_type}")
+        logger.warning(f"  Searched paths: {[str(p) for p in metadata_paths]}")
         return False
     
     # Get CV folds
+    logger.info("Step 2/5: Creating CV folds...")
     cv_folds = stratified_kfold(metadata_df, n_splits=N_SPLITS, random_state=RANDOM_STATE)
+    logger.info(f"  ✓ Created {len(cv_folds)} CV folds (random_state={RANDOM_STATE})")
     
     # Find fold directories
+    logger.info("Step 3/5: Finding trained model directories...")
     fold_dirs = sorted([d for d in model_dir.iterdir() if d.is_dir() and d.name.startswith('fold_')])
     
     if not fold_dirs:
-        logger.warning(f"No fold directories found for {model_type}")
+        logger.warning(f"  ✗ No fold directories found for {model_type}")
+        logger.warning(f"  Expected directories like: {model_dir}/fold_1/, {model_dir}/fold_2/, etc.")
         return False
     
-    logger.info(f"Found {len(fold_dirs)} fold directories")
+    logger.info(f"  ✓ Found {len(fold_dirs)} fold directories: {[d.name for d in fold_dirs]}")
     
     # Collect training histories
     all_train_histories = []
@@ -463,31 +589,54 @@ def process_model(model_type: str, output_dir: Path):
     
     project_root_str = str(project_root)
     
+    logger.info("Step 4/5: Loading models and generating predictions...")
     for fold_idx, (train_df, val_df) in enumerate(cv_folds):
         if fold_idx >= len(fold_dirs):
+            logger.warning(f"  Fold {fold_idx + 1}: No corresponding directory, skipping")
             break
         
         fold_dir = fold_dirs[fold_idx]
+        logger.info(f"  Processing fold {fold_idx + 1}/{len(fold_dirs)}: {fold_dir.name}")
         
         # Load training history
         metrics_file = fold_dir / "metrics.jsonl"
-        history = load_training_history(metrics_file)
-        if history:
-            all_train_histories.append(history)
+        if metrics_file.exists():
+            logger.debug(f"    Loading training history from {metrics_file}")
+            history = load_training_history(metrics_file)
+            if history:
+                all_train_histories.append(history)
+                epochs = len(history.get('train', {}).get('epoch', []))
+                logger.info(f"    ✓ Loaded training history ({epochs} epochs)")
+            else:
+                logger.debug(f"    No training history found or file is empty")
+        else:
+            logger.debug(f"    No metrics.jsonl found (this is OK for baseline models)")
         
         # Load model and get predictions
+        logger.info(f"    Loading model from {fold_dir}...")
         model, scaler = load_model_from_fold(model_type, fold_dir, project_root_str)
         if model is not None:
+            logger.info(f"    ✓ Model loaded successfully")
+            logger.info(f"    Generating predictions on validation set ({val_df.height} samples)...")
             y_true, y_probs = get_predictions_from_model(model, model_type, val_df, project_root_str)
             if y_true is not None and y_probs is not None:
                 all_y_true.append(y_true)
                 all_y_probs.append(y_probs)
-                logger.info(f"  Fold {fold_idx + 1}: Collected {len(y_true)} predictions")
+                mean_prob = y_probs.mean()
+                logger.info(f"    ✓ Collected {len(y_true)} predictions (mean prob: {mean_prob:.4f})")
+            else:
+                logger.warning(f"    ✗ Failed to generate predictions")
+        else:
+            logger.warning(f"    ✗ Failed to load model from {fold_dir}")
+    
+    logger.info(f"  Summary: {len(all_y_true)}/{len(fold_dirs)} folds processed successfully")
     
     # Generate plots
+    logger.info("Step 5/5: Generating plots...")
     
     # 1. Training curves (if available)
     if all_train_histories:
+        logger.info("  Generating training curves...")
         # Aggregate histories across folds
         aggregated_history = {
             "train": {"epoch": [], "loss": [], "accuracy": [], "f1": []},
@@ -501,46 +650,65 @@ def process_model(model_type: str, output_dir: Path):
         plot_training_curves(aggregated_history, 
                             model_output_dir / "training_curves.png", 
                             model_type)
+        logger.info(f"  ✓ Saved: training_curves.png")
+    else:
+        logger.info("  Skipping training curves (no metrics.jsonl files found)")
     
     # 2. ROC/PR curves (if predictions available)
     if all_y_true and all_y_probs:
         all_y_true_flat = np.concatenate(all_y_true)
         all_y_probs_flat = np.concatenate(all_y_probs)
         
+        logger.info(f"  Generating ROC/PR curves from {len(all_y_true_flat)} predictions...")
         auc, ap = plot_roc_pr_curves(all_y_true_flat, all_y_probs_flat,
                                      model_output_dir / "roc_pr_curves.png",
                                      model_type)
+        logger.info(f"  ✓ Saved: roc_pr_curves.png (AUC={auc:.4f}, AP={ap:.4f})")
         
         # 3. Confusion matrix
+        logger.info("  Generating confusion matrix...")
         y_pred = (all_y_probs_flat > 0.5).astype(int)
         plot_confusion_matrix_heatmap(all_y_true_flat, y_pred,
                                      model_output_dir / "confusion_matrix.png",
                                      model_type)
+        logger.info(f"  ✓ Saved: confusion_matrix.png")
         
         # 4. Prediction distribution
+        logger.info("  Generating prediction distribution plot...")
         plot_prediction_distribution(all_y_true_flat, all_y_probs_flat,
                                     model_output_dir / "prediction_distribution.png",
                                     model_type)
+        logger.info(f"  ✓ Saved: prediction_distribution.png")
         
         # 5. Save metrics summary
+        logger.info("  Computing metrics summary...")
+        accuracy = float((y_pred == all_y_true_flat).mean())
         metrics_summary = {
             "model_type": model_type,
             "n_samples": len(all_y_true_flat),
             "auc": float(auc),
             "ap": float(ap),
-            "accuracy": float((y_pred == all_y_true_flat).mean()),
+            "accuracy": accuracy,
             "mean_prob_real": float(all_y_probs_flat[all_y_true_flat == 0].mean()),
             "mean_prob_fake": float(all_y_probs_flat[all_y_true_flat == 1].mean()),
         }
         
         with open(model_output_dir / "metrics_summary.json", 'w') as f:
             json.dump(metrics_summary, f, indent=2)
+        logger.info(f"  ✓ Saved: metrics_summary.json")
         
-        logger.info(f"✓ Generated all plots for {model_type}")
-        logger.info(f"  AUC: {auc:.4f}, AP: {ap:.4f}")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"✓ Successfully generated all plots for {model_type}")
+        logger.info(f"  Output directory: {model_output_dir}")
+        logger.info(f"  Metrics: AUC={auc:.4f}, AP={ap:.4f}, Accuracy={accuracy:.4f}")
+        logger.info(f"  Samples: {len(all_y_true_flat)}")
+        logger.info(f"{'='*60}")
         return True
     else:
-        logger.warning(f"Could not generate prediction-based plots for {model_type}")
+        logger.warning(f"\n{'='*60}")
+        logger.warning(f"✗ Could not generate prediction-based plots for {model_type}")
+        logger.warning(f"  Reason: No predictions collected ({len(all_y_true)} folds with predictions)")
+        logger.warning(f"{'='*60}")
         return False
 
 
@@ -562,28 +730,50 @@ def main():
     logger.info("=" * 70)
     logger.info("Generate Plots from Trained Models")
     logger.info("=" * 70)
+    logger.info(f"Project root: {project_root}")
     logger.info(f"Output directory: {output_dir}")
+    logger.info(f"Stage 5 directory: {STAGE5_DIR}")
     
     # Find all model directories
+    logger.info("\nScanning for trained models...")
     if args.model_type:
         model_types = [args.model_type]
+        logger.info(f"Processing specific model: {args.model_type}")
     else:
         model_types = [d.name for d in STAGE5_DIR.iterdir() 
                       if d.is_dir() and not d.name.startswith('.')]
+        logger.info(f"Found {len(model_types)} model types: {', '.join(model_types)}")
     
-    logger.info(f"Found {len(model_types)} model types: {', '.join(model_types)}")
+    if len(model_types) == 0:
+        logger.error("No model types found! Make sure models are trained in data/stage5/")
+        return
+    
+    logger.info(f"\nStarting processing of {len(model_types)} model(s)...")
+    logger.info(f"{'='*70}\n")
     
     success_count = 0
-    for model_type in model_types:
+    failed_models = []
+    
+    for idx, model_type in enumerate(model_types, 1):
+        logger.info(f"\n[{idx}/{len(model_types)}] Processing: {model_type}")
         try:
             if process_model(model_type, output_dir):
                 success_count += 1
+            else:
+                failed_models.append(model_type)
         except Exception as e:
             logger.error(f"Error processing {model_type}: {e}", exc_info=True)
+            failed_models.append(model_type)
     
     logger.info(f"\n{'='*70}")
-    logger.info(f"Complete! Processed {success_count}/{len(model_types)} models")
-    logger.info(f"Plots saved to: {output_dir}")
+    logger.info("SUMMARY")
+    logger.info(f"{'='*70}")
+    logger.info(f"Total models: {len(model_types)}")
+    logger.info(f"Successful: {success_count}")
+    logger.info(f"Failed: {len(failed_models)}")
+    if failed_models:
+        logger.warning(f"Failed models: {', '.join(failed_models)}")
+    logger.info(f"\nPlots saved to: {output_dir}")
     logger.info(f"{'='*70}")
 
 

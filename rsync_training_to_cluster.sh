@@ -36,90 +36,60 @@ echo ""
 echo "This will sync:"
 echo "  ✓ Code: lib/, src/"
 echo "  ✓ SLURM scripts: scripts/slurm_jobs/"
-echo "  ✓ Training data: data/scaled_videos/, data/features_stage2/, data/features_stage4/"
 echo "  ✓ Config: requirements.txt"
 echo ""
 echo "This will NOT sync:"
+echo "  ✗ data/ (excluded completely - should exist on cluster)"
+echo "  ✗ archive/ (excluded completely)"
 echo "  ✗ venv/ (should exist on cluster)"
 echo "  ✗ logs/ (will be generated)"
-echo "  ✗ data/stage5/ (will be regenerated)"
 echo "  ✗ mlruns/ (MLflow runs)"
 echo "  ✗ __pycache__/ (Python cache)"
-echo "  ✗ videos/ (original videos, only scaled videos needed)"
+echo "  ✗ videos/ (original videos)"
 echo ""
 
 # Use SSH connection sharing for all operations
 SSH_OPTS=(-o ControlMaster=yes -o ControlPath="$SSH_CONTROL_SOCKET" -o ControlPersist=60)
 
-# Sync code directories
+# Sync code directories (maintain structure by using --relative or syncing from parent)
 echo "Syncing code (lib/, src/)..."
 rsync -avh --progress --exclude='__pycache__' --exclude='*.pyc' -e "ssh ${SSH_OPTS[*]}" \
-  "$SOURCE_DIR/lib" \
-  "$SOURCE_DIR/src" \
+  --relative \
+  "$SOURCE_DIR/./lib" \
+  "$SOURCE_DIR/./src" \
   "$DEST_HOST:$DEST_PATH"
 
 # Sync SLURM scripts
 echo ""
 echo "Syncing SLURM scripts..."
 rsync -avh --progress -e "ssh ${SSH_OPTS[*]}" \
-  "$SOURCE_DIR/scripts" \
+  --relative \
+  "$SOURCE_DIR/./scripts" \
   "$DEST_HOST:$DEST_PATH"
 
 # Sync requirements.txt
 echo ""
 echo "Syncing requirements.txt..."
 rsync -avh --progress -e "ssh ${SSH_OPTS[*]}" \
-  "$SOURCE_DIR/requirements.txt" \
+  --relative \
+  "$SOURCE_DIR/./requirements.txt" \
   "$DEST_HOST:$DEST_PATH"
 
-# Sync training data (metadata files and feature files)
+# Sync plot generation scripts
 echo ""
-echo "Syncing training data..."
-echo "  - Scaled videos metadata..."
+echo "Syncing plot generation scripts..."
 rsync -avh --progress -e "ssh ${SSH_OPTS[*]}" \
-  --include='scaled_metadata.*' \
-  --include='*/' \
-  --exclude='*' \
-  "$SOURCE_DIR/data/scaled_videos/" \
-  "$DEST_HOST:$DEST_PATH/data/scaled_videos/"
+  --relative \
+  "$SOURCE_DIR/./generate_plots_from_trained_models.py" \
+  "$SOURCE_DIR/./generate_plots.sh" \
+  "$SOURCE_DIR/./check_metrics.sh" \
+  "$DEST_HOST:$DEST_PATH"
 
-echo "  - Stage 2 features..."
-rsync -avh --progress -e "ssh ${SSH_OPTS[*]}" \
-  "$SOURCE_DIR/data/features_stage2/" \
-  "$DEST_HOST:$DEST_PATH/data/features_stage2/"
-
-echo "  - Stage 4 features..."
-rsync -avh --progress -e "ssh ${SSH_OPTS[*]}" \
-  "$SOURCE_DIR/data/features_stage4/" \
-  "$DEST_PATH/data/features_stage4/"
-
-# For video-based models, we need the actual scaled video files
-# This is optional - only sync if videos directory exists and is not too large
-if [ -d "$SOURCE_DIR/data/scaled_videos" ]; then
-    echo ""
-    echo "Checking if scaled video files need to be synced..."
-    VIDEO_COUNT=$(find "$SOURCE_DIR/data/scaled_videos" -name "*.mp4" -type f 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$VIDEO_COUNT" -gt 0 ]; then
-        echo "  Found $VIDEO_COUNT video files"
-        echo "  ⚠ WARNING: Video files are large. Syncing them may take a long time."
-        echo "  If videos already exist on cluster, you can skip this step."
-        read -p "  Sync video files? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            echo "  Syncing scaled video files (this may take a while)..."
-            rsync -avh --progress -e "ssh ${SSH_OPTS[*]}" \
-              --include='*.mp4' \
-              --include='*/' \
-              --exclude='*' \
-              "$SOURCE_DIR/data/scaled_videos/" \
-              "$DEST_HOST:$DEST_PATH/data/scaled_videos/"
-        else
-            echo "  Skipping video file sync (assuming they already exist on cluster)"
-        fi
-    else
-        echo "  No video files found in data/scaled_videos/"
-    fi
-fi
+# Note: data/ and archive/ folders are excluded completely
+# Training data should already exist on the cluster from previous stages
+echo ""
+echo "⚠ Note: data/ and archive/ folders are excluded from sync"
+echo "  Training data should already exist on the cluster from previous stages"
 
 # Clear Python cache on remote
 echo ""
