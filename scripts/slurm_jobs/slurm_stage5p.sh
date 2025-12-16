@@ -11,7 +11,7 @@
 #SBATCH --account=si670f25_class
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
-#SBATCH --mem=64G
+#SBATCH --mem=80G
 #SBATCH --cpus-per-task=1
 #SBATCH --time=1-00:00:00
 #SBATCH --output=logs/stage5/stage5p-%j.out

@@ -8,12 +8,12 @@
 #   sbatch scripts/slurm_jobs/slurm_stage5_xgboost_pretrained_inception.sh
 
 #SBATCH --job-name=fvc_stage5f
-#SBATCH --account=eecs442f25_class
+#SBATCH --account=si670f25_class
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
-#SBATCH --mem=64G
-#SBATCH --cpus-per-task=4
-#SBATCH --time=8:00:00
+#SBATCH --mem=80G
+#SBATCH --cpus-per-task=1
+#SBATCH --time=1-00:00:00
 #SBATCH --output=logs/stage5/stage5f-%j.out
 #SBATCH --error=logs/stage5/stage5f-%j.err
 #SBATCH --mail-user=santoshd@umich.edu,urvim@umich.edu,suzanef@umich.edu
