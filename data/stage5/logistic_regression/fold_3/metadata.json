@@ -1,0 +1,23 @@
+{
+  "feature_indices": null,
+  "feature_names": [
+    "stage2_noise_energy",
+    "stage2_noise_mean",
+    "stage2_noise_std",
+    "stage2_dct_dc_mean",
+    "stage2_dct_dc_std",
+    "stage2_dct_ac_mean",
+    "stage2_dct_ac_std",
+    "stage2_dct_ac_energy",
+    "stage2_laplacian_var",
+    "stage2_gradient_mean",
+    "stage2_gradient_std",
+    "stage2_boundary_inconsistency",
+    "stage2_codec_bitrate",
+    "stage2_codec_fps",
+    "stage2_codec_resolution"
+  ],
+  "use_stage2_only": true,
+  "features_stage2_path": "/gpfs/accounts/si670f25_class_root/si670f25_class/santoshd/fvc/data/features_stage2/features_metadata.arrow",
+  "features_stage4_path": null
+}

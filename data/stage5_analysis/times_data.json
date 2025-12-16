@@ -1,0 +1,793 @@
+[
+  {
+    "model_type": "logistic_regression",
+    "duration_seconds": 7.64,
+    "duration_minutes": 0.12733333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765567439.log"
+  },
+  {
+    "model_type": "logistic_regression",
+    "duration_seconds": 5.04,
+    "duration_minutes": 0.084,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765564050.log"
+  },
+  {
+    "model_type": "logistic_regression",
+    "duration_seconds": 1667.24,
+    "duration_minutes": 27.787333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765574435.log"
+  },
+  {
+    "model_type": "logistic_regression",
+    "duration_seconds": 6.18,
+    "duration_minutes": 0.103,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765839545.log"
+  },
+  {
+    "model_type": "logistic_regression",
+    "duration_seconds": 1720.34,
+    "duration_minutes": 28.67233333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765569266.log"
+  },
+  {
+    "model_type": "logistic_regression",
+    "duration_seconds": 5.84,
+    "duration_minutes": 0.09733333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765565974.log"
+  },
+  {
+    "model_type": "logistic_regression",
+    "duration_seconds": 4.35,
+    "duration_minutes": 0.0725,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765563683.log"
+  },
+  {
+    "model_type": "svm",
+    "duration_seconds": 7.75,
+    "duration_minutes": 0.12916666666666668,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765839790.log"
+  },
+  {
+    "model_type": "svm",
+    "duration_seconds": 5.22,
+    "duration_minutes": 0.087,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765567881.log"
+  },
+  {
+    "model_type": "svm",
+    "duration_seconds": 8.76,
+    "duration_minutes": 0.146,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765564429.log"
+  },
+  {
+    "model_type": "svm",
+    "duration_seconds": 1521.15,
+    "duration_minutes": 25.352500000000003,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765571441.log"
+  },
+  {
+    "model_type": "svm",
+    "duration_seconds": 1510.37,
+    "duration_minutes": 25.172833333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765576488.log"
+  },
+  {
+    "model_type": "naive_cnn",
+    "duration_seconds": 1088.47,
+    "duration_minutes": 18.141166666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765590385.log"
+  },
+  {
+    "model_type": "naive_cnn",
+    "duration_seconds": 504.29,
+    "duration_minutes": 8.404833333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765588623.log"
+  },
+  {
+    "model_type": "pretrained_inception",
+    "duration_seconds": 821.78,
+    "duration_minutes": 13.696333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765609969.log"
+  },
+  {
+    "model_type": "pretrained_inception",
+    "duration_seconds": 65.75,
+    "duration_minutes": 1.0958333333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765615229.log"
+  },
+  {
+    "model_type": "pretrained_inception",
+    "duration_seconds": 61.78,
+    "duration_minutes": 1.0296666666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765613968.log"
+  },
+  {
+    "model_type": "pretrained_inception",
+    "duration_seconds": 113.73,
+    "duration_minutes": 1.8955,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765744802.log"
+  },
+  {
+    "model_type": "pretrained_inception",
+    "duration_seconds": 21.05,
+    "duration_minutes": 0.35083333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765616809.log"
+  },
+  {
+    "model_type": "pretrained_inception",
+    "duration_seconds": 54607.58,
+    "duration_minutes": 910.1263333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765670381.log"
+  },
+  {
+    "model_type": "pretrained_inception",
+    "duration_seconds": 235.16,
+    "duration_minutes": 3.9193333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765609495.log"
+  },
+  {
+    "model_type": "xgboost_pretrained_inception",
+    "duration_seconds": 821.78,
+    "duration_minutes": 13.696333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765609969.log"
+  },
+  {
+    "model_type": "xgboost_pretrained_inception",
+    "duration_seconds": 65.75,
+    "duration_minutes": 1.0958333333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765615229.log"
+  },
+  {
+    "model_type": "xgboost_pretrained_inception",
+    "duration_seconds": 61.78,
+    "duration_minutes": 1.0296666666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765613968.log"
+  },
+  {
+    "model_type": "xgboost_pretrained_inception",
+    "duration_seconds": 21.05,
+    "duration_minutes": 0.35083333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765616809.log"
+  },
+  {
+    "model_type": "xgboost_pretrained_inception",
+    "duration_seconds": 54607.58,
+    "duration_minutes": 910.1263333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765670381.log"
+  },
+  {
+    "model_type": "xgboost_i3d",
+    "duration_seconds": 20.17,
+    "duration_minutes": 0.33616666666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765617010.log"
+  },
+  {
+    "model_type": "xgboost_i3d",
+    "duration_seconds": 65.02,
+    "duration_minutes": 1.0836666666666666,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765615514.log"
+  },
+  {
+    "model_type": "xgboost_i3d",
+    "duration_seconds": 59.68,
+    "duration_minutes": 0.9946666666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765614235.log"
+  },
+  {
+    "model_type": "xgboost_i3d",
+    "duration_seconds": 54961.6,
+    "duration_minutes": 916.0266666666666,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765670546.log"
+  },
+  {
+    "model_type": "xgboost_r2plus1d",
+    "duration_seconds": 120.83,
+    "duration_minutes": 2.0138333333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765614468.log"
+  },
+  {
+    "model_type": "xgboost_r2plus1d",
+    "duration_seconds": 20.88,
+    "duration_minutes": 0.348,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765617234.log"
+  },
+  {
+    "model_type": "xgboost_r2plus1d",
+    "duration_seconds": 61605.37,
+    "duration_minutes": 1026.7561666666668,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765670491.log"
+  },
+  {
+    "model_type": "xgboost_vit_gru",
+    "duration_seconds": 55.6,
+    "duration_minutes": 0.9266666666666666,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765725198.log"
+  },
+  {
+    "model_type": "xgboost_vit_gru",
+    "duration_seconds": 72883.74,
+    "duration_minutes": 1214.729,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765736928.log"
+  },
+  {
+    "model_type": "xgboost_vit_transformer",
+    "duration_seconds": 49.08,
+    "duration_minutes": 0.818,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765725424.log"
+  },
+  {
+    "model_type": "vit_gru",
+    "duration_seconds": 55.6,
+    "duration_minutes": 0.9266666666666666,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765725198.log"
+  },
+  {
+    "model_type": "vit_gru",
+    "duration_seconds": 72883.74,
+    "duration_minutes": 1214.729,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765736928.log"
+  },
+  {
+    "model_type": "vit_transformer",
+    "duration_seconds": 49.08,
+    "duration_minutes": 0.818,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765725424.log"
+  },
+  {
+    "model_type": "i3d",
+    "duration_seconds": 20.17,
+    "duration_minutes": 0.33616666666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765617010.log"
+  },
+  {
+    "model_type": "i3d",
+    "duration_seconds": 65.02,
+    "duration_minutes": 1.0836666666666666,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765615514.log"
+  },
+  {
+    "model_type": "i3d",
+    "duration_seconds": 59.68,
+    "duration_minutes": 0.9946666666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765614235.log"
+  },
+  {
+    "model_type": "i3d",
+    "duration_seconds": 113.73,
+    "duration_minutes": 1.8955,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765744802.log"
+  },
+  {
+    "model_type": "i3d",
+    "duration_seconds": 54961.6,
+    "duration_minutes": 916.0266666666666,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765670546.log"
+  },
+  {
+    "model_type": "r2plus1d",
+    "duration_seconds": 120.83,
+    "duration_minutes": 2.0138333333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765614468.log"
+  },
+  {
+    "model_type": "r2plus1d",
+    "duration_seconds": 113.73,
+    "duration_minutes": 1.8955,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765744802.log"
+  },
+  {
+    "model_type": "r2plus1d",
+    "duration_seconds": 20.88,
+    "duration_minutes": 0.348,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765617234.log"
+  },
+  {
+    "model_type": "r2plus1d",
+    "duration_seconds": 61605.37,
+    "duration_minutes": 1026.7561666666668,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765670491.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 1449.36,
+    "duration_minutes": 24.156,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765589336.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 596.88,
+    "duration_minutes": 9.948,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765758500.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 2004.67,
+    "duration_minutes": 33.41116666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765571841.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 77.77,
+    "duration_minutes": 1.2961666666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765742947.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 558.83,
+    "duration_minutes": 9.313833333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765762077.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 524.9,
+    "duration_minutes": 8.748333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765587900.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 355.12,
+    "duration_minutes": 5.918666666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765753018.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 1593.11,
+    "duration_minutes": 26.55183333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765583685.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 1098.39,
+    "duration_minutes": 18.306500000000003,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765590950.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 592.89,
+    "duration_minutes": 9.881499999999999,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765757333.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 81.48,
+    "duration_minutes": 1.358,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765739367.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 392.48,
+    "duration_minutes": 6.541333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765573405.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 2095.26,
+    "duration_minutes": 34.92100000000001,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765569460.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 113.73,
+    "duration_minutes": 1.8955,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765744802.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 213.54,
+    "duration_minutes": 3.5589999999999997,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765749316.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 85.6,
+    "duration_minutes": 1.4266666666666665,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765741763.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 534.98,
+    "duration_minutes": 8.916333333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765587162.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 547.88,
+    "duration_minutes": 9.131333333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765759704.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 410.64,
+    "duration_minutes": 6.843999999999999,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765751990.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 565.62,
+    "duration_minutes": 9.427,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765756135.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 216.62,
+    "duration_minutes": 3.6103333333333336,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765754939.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 88.25,
+    "duration_minutes": 1.4708333333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765750154.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 2040.36,
+    "duration_minutes": 34.006,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765592250.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 232.65,
+    "duration_minutes": 3.8775,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765748898.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 1449.56,
+    "duration_minutes": 24.159333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765585477.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 1779.98,
+    "duration_minutes": 29.666333333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765567357.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 200.69,
+    "duration_minutes": 3.3448333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765753739.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 519.6,
+    "duration_minutes": 8.66,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765760867.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 76.22,
+    "duration_minutes": 1.2703333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765738205.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 73.12,
+    "duration_minutes": 1.2186666666666668,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765740545.log"
+  },
+  {
+    "model_type": "x3d",
+    "duration_seconds": 504.29,
+    "duration_minutes": 8.404833333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765588623.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 327.27,
+    "duration_minutes": 5.4544999999999995,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765602357.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 187.3,
+    "duration_minutes": 3.121666666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765756076.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 332.63,
+    "duration_minutes": 5.543833333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765597526.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 82.27,
+    "duration_minutes": 1.3711666666666666,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765749423.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 320.52,
+    "duration_minutes": 5.342,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765603847.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 168.81,
+    "duration_minutes": 2.8135,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765757344.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 334.39,
+    "duration_minutes": 5.573166666666666,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765594310.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 331.98,
+    "duration_minutes": 5.533,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765596315.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 62.61,
+    "duration_minutes": 1.0435,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765739229.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 847.63,
+    "duration_minutes": 14.127166666666666,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765585552.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 73.79,
+    "duration_minutes": 1.2298333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765740449.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 312.09,
+    "duration_minutes": 5.201499999999999,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765604384.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 113.73,
+    "duration_minutes": 1.8955,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765744802.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 319.44,
+    "duration_minutes": 5.324,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765603340.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 850.8,
+    "duration_minutes": 14.18,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765584335.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 1079.0,
+    "duration_minutes": 17.983333333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765591698.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 318.47,
+    "duration_minutes": 5.307833333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765602855.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 94.11,
+    "duration_minutes": 1.5685,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765738049.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 77.68,
+    "duration_minutes": 1.2946666666666669,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765744541.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 1088.47,
+    "duration_minutes": 18.141166666666667,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765590385.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 84.12,
+    "duration_minutes": 1.4020000000000001,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765742912.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 87.56,
+    "duration_minutes": 1.4593333333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765749660.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 960.51,
+    "duration_minutes": 16.0085,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765587942.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 89.6,
+    "duration_minutes": 1.4933333333333332,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765749160.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 104.07,
+    "duration_minutes": 1.7345,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765748849.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 1104.64,
+    "duration_minutes": 18.410666666666668,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765593005.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 210.78,
+    "duration_minutes": 3.513,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765752622.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 216.62,
+    "duration_minutes": 3.6103333333333336,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765754939.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 88.25,
+    "duration_minutes": 1.4708333333333334,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765750154.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 162.59,
+    "duration_minutes": 2.7098333333333335,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765751661.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 200.69,
+    "duration_minutes": 3.3448333333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765753739.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 327.87,
+    "duration_minutes": 5.4645,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765595249.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 1065.95,
+    "duration_minutes": 17.765833333333333,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765589112.log"
+  },
+  {
+    "model_type": "slowfast",
+    "duration_seconds": 79.63,
+    "duration_minutes": 1.3271666666666666,
+    "source": "python",
+    "log_file": "logs/stage5_training_1765741666.log"
+  }
+]

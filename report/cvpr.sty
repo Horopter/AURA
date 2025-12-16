@@ -1,0 +1,125 @@
+% cvpr.sty - CVPR conference style file
+% Based on the official CVPR 2024 template
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{cvpr}[2024/01/01 CVPR Style]
+
+% Page layout
+\setlength{\textheight}{8.875in}
+\setlength{\textwidth}{6.875in}
+\setlength{\columnsep}{0.3125in}
+\setlength{\topmargin}{0in}
+\setlength{\headheight}{0in}
+\setlength{\headsep}{0in}
+\setlength{\parindent}{1pc}
+\setlength{\oddsidemargin}{-.304in}
+\setlength{\evensidemargin}{-.304in}
+
+% Fonts
+\renewcommand{\normalsize}{\@setfontsize\normalsize\@xpt{11.2}}
+\renewcommand{\small}{\@setfontsize\small\@ixpt{10}}
+\renewcommand{\footnotesize}{\@setfontsize\footnotesize\@ixpt{10}}
+\renewcommand{\scriptsize}{\@setfontsize\scriptsize\@viipt{8}}
+\renewcommand{\tiny}{\@setfontsize\tiny\@vipt{7}}
+\renewcommand{\large}{\@setfontsize\large\@xiipt{14}}
+\renewcommand{\Large}{\@setfontsize\Large\@xivpt{18}}
+\renewcommand{\LARGE}{\@setfontsize\LARGE\@xviipt{20}}
+\renewcommand{\huge}{\@setfontsize\huge\@xxpt{23}}
+\renewcommand{\Huge}{\@setfontsize\Huge\@xxvpt{28}}
+
+% Title
+\def\@maketitle{%
+  \newpage
+  \null
+  \vskip 0.1in%
+  \begin{center}%
+    {\Large\bf \@title \par}%
+    \vskip 0.15in%
+    {
+      \lineskip .5em%
+      \begin{tabular}[t]{c}%
+        \@author
+      \end{tabular}\par
+    }%
+  \end{center}%
+  \par
+  \vskip 0.2in
+}
+
+% Abstract
+\renewenvironment{abstract}{%
+  \centerline{\large\bf Abstract}%
+  \vspace{0.5ex}%
+  \begin{quote}%
+}{\par\end{quote}\vskip 1ex}
+
+% Section headings
+\setcounter{secnumdepth}{3}
+
+\renewcommand\section{\@startsection {section}{1}{\z@}%
+  {-2.0ex \@plus -0.5ex \@minus -.2ex}%
+  {1.0ex \@plus.2ex}%
+  {\normalfont\large\bf\raggedright}}
+\renewcommand\subsection{\@startsection{subsection}{2}{\z@}%
+  {-1.8ex\@plus -0.5ex \@minus -.2ex}%
+  {0.8ex \@plus .2ex}%
+  {\normalfont\normalsize\bf\raggedright}}
+\renewcommand\subsubsection{\@startsection{subsubsection}{3}{\z@}%
+  {-1.5ex\@plus -0.5ex \@minus -.2ex}%
+  {0.5ex \@plus .2ex}%
+  {\normalfont\normalsize\bf\raggedright}}
+\renewcommand\paragraph{\@startsection{paragraph}{4}{\z@}%
+  {1.5ex \@plus 0.5ex \@minus .2ex}%
+  {-1em}%
+  {\normalfont\normalsize\bf}}
+
+% Figure/table captions
+\long\def\@makecaption#1#2{%
+  \vskip\abovecaptionskip
+  \sbox\@tempboxa{#1: #2}%
+  \ifdim \wd\@tempboxa >\hsize
+    #1: #2\par
+  \else
+    \global \@minipagefalse
+    \hb@xt@\hsize{\hfil\box\@tempboxa\hfil}%
+  \fi
+  \vskip\belowcaptionskip}
+
+\setlength\abovecaptionskip{5\p@}
+\setlength\belowcaptionskip{5\p@}
+
+% Lists
+\setlength{\topsep}{4pt plus 1pt minus 2pt}
+\setlength{\partopsep}{1pt plus 0.5pt minus 0.5pt}
+\setlength{\itemsep}{2pt plus 1pt minus 0.5pt}
+\setlength{\parsep}{2pt plus 1pt minus 0.5pt}
+
+% Footnotes
+\renewcommand{\footnoterule}{%
+  \kern-3\p@
+  \hrule width 2in
+  \kern 2.6\p@}
+\renewcommand{\thefootnote}{\fnsymbol{footnote}}
+
+% References
+\def\thebibliography#1{%
+  \section*{References}
+  \small
+  \list{[\arabic{enumi}]}{\settowidth\labelwidth{[#1]}
+    \leftmargin\labelwidth
+    \advance\leftmargin\labelsep
+    \usecounter{enumi}}
+  \def\newblock{\hskip .11em plus .33em minus .07em}
+  \sloppy\clubpenalty4000\widowpenalty4000
+  \sfcode`\.=1000\relax}
+\let\endthebibliography=\endlist
+
+% CVPR specific commands
+\newcommand{\cvprfinalcopy}{}
+\newcommand{\etal}{\textit{et al}.}
+\newcommand{\ie}{\textit{i.e.}}
+\newcommand{\eg}{\textit{e.g.}}
+
+% Page style
+\pagestyle{plain}
+\thispagestyle{empty}

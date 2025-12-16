@@ -1,0 +1,571 @@
+{
+  "best_params": {
+    "C": 0.01,
+    "l1_ratio": 0.1,
+    "max_iter": 1000,
+    "penalty": "elasticnet",
+    "solver": "saga"
+  },
+  "best_val_f1": 0.7480916030534351,
+  "cv_val_f1": 0.6337469986575985,
+  "cv_val_f1_std": 0.03653218013352602,
+  "cv_val_auc": 0.6787067205094923,
+  "test_f1": 0.6337209302325582,
+  "test_auc": 0.6977914167480355,
+  "test_ap": 0.6767377615451453,
+  "test_acc": 0.6158536585365854,
+  "grid_results": [
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.0
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.6792452830188679
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.6991869918699187
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "l1_ratio": 0.1,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.7480916030534351
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.0
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.6792452830188679
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.6991869918699187
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "l1_ratio": 0.5,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.6792452830188679
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.0
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.6792452830188679
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.6991869918699187
+    },
+    {
+      "params": {
+        "C": 0.01,
+        "l1_ratio": 0.9,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.6792452830188679
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7058823529411765
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.734375
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7130434782608696
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.7130434782608696
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "l1_ratio": 0.1,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.7241379310344828
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7058823529411765
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.734375
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7130434782608696
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.7130434782608696
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "l1_ratio": 0.5,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.7107438016528925
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7058823529411765
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.734375
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7130434782608696
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.7130434782608696
+    },
+    {
+      "params": {
+        "C": 0.1,
+        "l1_ratio": 0.9,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.7258064516129032
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7079646017699115
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.7192982456140351
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7272727272727273
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.7272727272727273
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "l1_ratio": 0.1,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.7272727272727273
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7079646017699115
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.7192982456140351
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7272727272727273
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.7272727272727273
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "l1_ratio": 0.5,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.6964285714285714
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7079646017699115
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.7192982456140351
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7272727272727273
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.7272727272727273
+    },
+    {
+      "params": {
+        "C": 1.0,
+        "l1_ratio": 0.9,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.7192982456140351
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "l1_ratio": 0.1,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "l1_ratio": 0.5,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l1",
+        "solver": "saga"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "liblinear"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "max_iter": 1000,
+        "penalty": "l2",
+        "solver": "saga"
+      },
+      "val_f1": 0.7037037037037037
+    },
+    {
+      "params": {
+        "C": 10.0,
+        "l1_ratio": 0.9,
+        "max_iter": 1000,
+        "penalty": "elasticnet",
+        "solver": "saga"
+      },
+      "val_f1": 0.7037037037037037
+    }
+  ]
+}

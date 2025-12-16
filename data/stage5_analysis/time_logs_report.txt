@@ -1,0 +1,515 @@
+================================================================================
+STAGE 5 MODELS: TIME LOGS
+================================================================================
+
+Model: i3d
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 0.34 minutes (20 seconds)
+  Log file: logs/stage5_training_1765617010.log
+
+  Source: python
+  Duration: 1.08 minutes (65 seconds)
+  Log file: logs/stage5_training_1765615514.log
+
+  Source: python
+  Duration: 0.99 minutes (60 seconds)
+  Log file: logs/stage5_training_1765614235.log
+
+  Source: python
+  Duration: 1.90 minutes (114 seconds)
+  Log file: logs/stage5_training_1765744802.log
+
+  Source: python
+  Duration: 916.03 minutes (54962 seconds)
+  Log file: logs/stage5_training_1765670546.log
+
+  Average: 184.07 minutes
+
+Model: logistic_regression
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 0.13 minutes (8 seconds)
+  Log file: logs/stage5_training_1765567439.log
+
+  Source: python
+  Duration: 0.08 minutes (5 seconds)
+  Log file: logs/stage5_training_1765564050.log
+
+  Source: python
+  Duration: 27.79 minutes (1667 seconds)
+  Log file: logs/stage5_training_1765574435.log
+
+  Source: python
+  Duration: 0.10 minutes (6 seconds)
+  Log file: logs/stage5_training_1765839545.log
+
+  Source: python
+  Duration: 28.67 minutes (1720 seconds)
+  Log file: logs/stage5_training_1765569266.log
+
+  Source: python
+  Duration: 0.10 minutes (6 seconds)
+  Log file: logs/stage5_training_1765565974.log
+
+  Source: python
+  Duration: 0.07 minutes (4 seconds)
+  Log file: logs/stage5_training_1765563683.log
+
+  Average: 8.13 minutes
+
+Model: naive_cnn
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 18.14 minutes (1088 seconds)
+  Log file: logs/stage5_training_1765590385.log
+
+  Source: python
+  Duration: 8.40 minutes (504 seconds)
+  Log file: logs/stage5_training_1765588623.log
+
+  Average: 13.27 minutes
+
+Model: pretrained_inception
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 13.70 minutes (822 seconds)
+  Log file: logs/stage5_training_1765609969.log
+
+  Source: python
+  Duration: 1.10 minutes (66 seconds)
+  Log file: logs/stage5_training_1765615229.log
+
+  Source: python
+  Duration: 1.03 minutes (62 seconds)
+  Log file: logs/stage5_training_1765613968.log
+
+  Source: python
+  Duration: 1.90 minutes (114 seconds)
+  Log file: logs/stage5_training_1765744802.log
+
+  Source: python
+  Duration: 0.35 minutes (21 seconds)
+  Log file: logs/stage5_training_1765616809.log
+
+  Source: python
+  Duration: 910.13 minutes (54608 seconds)
+  Log file: logs/stage5_training_1765670381.log
+
+  Source: python
+  Duration: 3.92 minutes (235 seconds)
+  Log file: logs/stage5_training_1765609495.log
+
+  Average: 133.16 minutes
+
+Model: r2plus1d
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 2.01 minutes (121 seconds)
+  Log file: logs/stage5_training_1765614468.log
+
+  Source: python
+  Duration: 1.90 minutes (114 seconds)
+  Log file: logs/stage5_training_1765744802.log
+
+  Source: python
+  Duration: 0.35 minutes (21 seconds)
+  Log file: logs/stage5_training_1765617234.log
+
+  Source: python
+  Duration: 1026.76 minutes (61605 seconds)
+  Log file: logs/stage5_training_1765670491.log
+
+  Average: 257.75 minutes
+
+Model: slowfast
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 5.45 minutes (327 seconds)
+  Log file: logs/stage5_training_1765602357.log
+
+  Source: python
+  Duration: 3.12 minutes (187 seconds)
+  Log file: logs/stage5_training_1765756076.log
+
+  Source: python
+  Duration: 5.54 minutes (333 seconds)
+  Log file: logs/stage5_training_1765597526.log
+
+  Source: python
+  Duration: 1.37 minutes (82 seconds)
+  Log file: logs/stage5_training_1765749423.log
+
+  Source: python
+  Duration: 5.34 minutes (321 seconds)
+  Log file: logs/stage5_training_1765603847.log
+
+  Source: python
+  Duration: 2.81 minutes (169 seconds)
+  Log file: logs/stage5_training_1765757344.log
+
+  Source: python
+  Duration: 5.57 minutes (334 seconds)
+  Log file: logs/stage5_training_1765594310.log
+
+  Source: python
+  Duration: 5.53 minutes (332 seconds)
+  Log file: logs/stage5_training_1765596315.log
+
+  Source: python
+  Duration: 1.04 minutes (63 seconds)
+  Log file: logs/stage5_training_1765739229.log
+
+  Source: python
+  Duration: 14.13 minutes (848 seconds)
+  Log file: logs/stage5_training_1765585552.log
+
+  Source: python
+  Duration: 1.23 minutes (74 seconds)
+  Log file: logs/stage5_training_1765740449.log
+
+  Source: python
+  Duration: 5.20 minutes (312 seconds)
+  Log file: logs/stage5_training_1765604384.log
+
+  Source: python
+  Duration: 1.90 minutes (114 seconds)
+  Log file: logs/stage5_training_1765744802.log
+
+  Source: python
+  Duration: 5.32 minutes (319 seconds)
+  Log file: logs/stage5_training_1765603340.log
+
+  Source: python
+  Duration: 14.18 minutes (851 seconds)
+  Log file: logs/stage5_training_1765584335.log
+
+  Source: python
+  Duration: 17.98 minutes (1079 seconds)
+  Log file: logs/stage5_training_1765591698.log
+
+  Source: python
+  Duration: 5.31 minutes (318 seconds)
+  Log file: logs/stage5_training_1765602855.log
+
+  Source: python
+  Duration: 1.57 minutes (94 seconds)
+  Log file: logs/stage5_training_1765738049.log
+
+  Source: python
+  Duration: 1.29 minutes (78 seconds)
+  Log file: logs/stage5_training_1765744541.log
+
+  Source: python
+  Duration: 18.14 minutes (1088 seconds)
+  Log file: logs/stage5_training_1765590385.log
+
+  Source: python
+  Duration: 1.40 minutes (84 seconds)
+  Log file: logs/stage5_training_1765742912.log
+
+  Source: python
+  Duration: 1.46 minutes (88 seconds)
+  Log file: logs/stage5_training_1765749660.log
+
+  Source: python
+  Duration: 16.01 minutes (961 seconds)
+  Log file: logs/stage5_training_1765587942.log
+
+  Source: python
+  Duration: 1.49 minutes (90 seconds)
+  Log file: logs/stage5_training_1765749160.log
+
+  Source: python
+  Duration: 1.73 minutes (104 seconds)
+  Log file: logs/stage5_training_1765748849.log
+
+  Source: python
+  Duration: 18.41 minutes (1105 seconds)
+  Log file: logs/stage5_training_1765593005.log
+
+  Source: python
+  Duration: 3.51 minutes (211 seconds)
+  Log file: logs/stage5_training_1765752622.log
+
+  Source: python
+  Duration: 3.61 minutes (217 seconds)
+  Log file: logs/stage5_training_1765754939.log
+
+  Source: python
+  Duration: 1.47 minutes (88 seconds)
+  Log file: logs/stage5_training_1765750154.log
+
+  Source: python
+  Duration: 2.71 minutes (163 seconds)
+  Log file: logs/stage5_training_1765751661.log
+
+  Source: python
+  Duration: 3.34 minutes (201 seconds)
+  Log file: logs/stage5_training_1765753739.log
+
+  Source: python
+  Duration: 5.46 minutes (328 seconds)
+  Log file: logs/stage5_training_1765595249.log
+
+  Source: python
+  Duration: 17.77 minutes (1066 seconds)
+  Log file: logs/stage5_training_1765589112.log
+
+  Source: python
+  Duration: 1.33 minutes (80 seconds)
+  Log file: logs/stage5_training_1765741666.log
+
+  Average: 5.93 minutes
+
+Model: svm
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 0.13 minutes (8 seconds)
+  Log file: logs/stage5_training_1765839790.log
+
+  Source: python
+  Duration: 0.09 minutes (5 seconds)
+  Log file: logs/stage5_training_1765567881.log
+
+  Source: python
+  Duration: 0.15 minutes (9 seconds)
+  Log file: logs/stage5_training_1765564429.log
+
+  Source: python
+  Duration: 25.35 minutes (1521 seconds)
+  Log file: logs/stage5_training_1765571441.log
+
+  Source: python
+  Duration: 25.17 minutes (1510 seconds)
+  Log file: logs/stage5_training_1765576488.log
+
+  Average: 10.18 minutes
+
+Model: vit_gru
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 0.93 minutes (56 seconds)
+  Log file: logs/stage5_training_1765725198.log
+
+  Source: python
+  Duration: 1214.73 minutes (72884 seconds)
+  Log file: logs/stage5_training_1765736928.log
+
+  Average: 607.83 minutes
+
+Model: vit_transformer
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 0.82 minutes (49 seconds)
+  Log file: logs/stage5_training_1765725424.log
+
+  Average: 0.82 minutes
+
+Model: x3d
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 24.16 minutes (1449 seconds)
+  Log file: logs/stage5_training_1765589336.log
+
+  Source: python
+  Duration: 9.95 minutes (597 seconds)
+  Log file: logs/stage5_training_1765758500.log
+
+  Source: python
+  Duration: 33.41 minutes (2005 seconds)
+  Log file: logs/stage5_training_1765571841.log
+
+  Source: python
+  Duration: 1.30 minutes (78 seconds)
+  Log file: logs/stage5_training_1765742947.log
+
+  Source: python
+  Duration: 9.31 minutes (559 seconds)
+  Log file: logs/stage5_training_1765762077.log
+
+  Source: python
+  Duration: 8.75 minutes (525 seconds)
+  Log file: logs/stage5_training_1765587900.log
+
+  Source: python
+  Duration: 5.92 minutes (355 seconds)
+  Log file: logs/stage5_training_1765753018.log
+
+  Source: python
+  Duration: 26.55 minutes (1593 seconds)
+  Log file: logs/stage5_training_1765583685.log
+
+  Source: python
+  Duration: 18.31 minutes (1098 seconds)
+  Log file: logs/stage5_training_1765590950.log
+
+  Source: python
+  Duration: 9.88 minutes (593 seconds)
+  Log file: logs/stage5_training_1765757333.log
+
+  Source: python
+  Duration: 1.36 minutes (81 seconds)
+  Log file: logs/stage5_training_1765739367.log
+
+  Source: python
+  Duration: 6.54 minutes (392 seconds)
+  Log file: logs/stage5_training_1765573405.log
+
+  Source: python
+  Duration: 34.92 minutes (2095 seconds)
+  Log file: logs/stage5_training_1765569460.log
+
+  Source: python
+  Duration: 1.90 minutes (114 seconds)
+  Log file: logs/stage5_training_1765744802.log
+
+  Source: python
+  Duration: 3.56 minutes (214 seconds)
+  Log file: logs/stage5_training_1765749316.log
+
+  Source: python
+  Duration: 1.43 minutes (86 seconds)
+  Log file: logs/stage5_training_1765741763.log
+
+  Source: python
+  Duration: 8.92 minutes (535 seconds)
+  Log file: logs/stage5_training_1765587162.log
+
+  Source: python
+  Duration: 9.13 minutes (548 seconds)
+  Log file: logs/stage5_training_1765759704.log
+
+  Source: python
+  Duration: 6.84 minutes (411 seconds)
+  Log file: logs/stage5_training_1765751990.log
+
+  Source: python
+  Duration: 9.43 minutes (566 seconds)
+  Log file: logs/stage5_training_1765756135.log
+
+  Source: python
+  Duration: 3.61 minutes (217 seconds)
+  Log file: logs/stage5_training_1765754939.log
+
+  Source: python
+  Duration: 1.47 minutes (88 seconds)
+  Log file: logs/stage5_training_1765750154.log
+
+  Source: python
+  Duration: 34.01 minutes (2040 seconds)
+  Log file: logs/stage5_training_1765592250.log
+
+  Source: python
+  Duration: 3.88 minutes (233 seconds)
+  Log file: logs/stage5_training_1765748898.log
+
+  Source: python
+  Duration: 24.16 minutes (1450 seconds)
+  Log file: logs/stage5_training_1765585477.log
+
+  Source: python
+  Duration: 29.67 minutes (1780 seconds)
+  Log file: logs/stage5_training_1765567357.log
+
+  Source: python
+  Duration: 3.34 minutes (201 seconds)
+  Log file: logs/stage5_training_1765753739.log
+
+  Source: python
+  Duration: 8.66 minutes (520 seconds)
+  Log file: logs/stage5_training_1765760867.log
+
+  Source: python
+  Duration: 1.27 minutes (76 seconds)
+  Log file: logs/stage5_training_1765738205.log
+
+  Source: python
+  Duration: 1.22 minutes (73 seconds)
+  Log file: logs/stage5_training_1765740545.log
+
+  Source: python
+  Duration: 8.40 minutes (504 seconds)
+  Log file: logs/stage5_training_1765588623.log
+
+  Average: 11.33 minutes
+
+Model: xgboost_i3d
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 0.34 minutes (20 seconds)
+  Log file: logs/stage5_training_1765617010.log
+
+  Source: python
+  Duration: 1.08 minutes (65 seconds)
+  Log file: logs/stage5_training_1765615514.log
+
+  Source: python
+  Duration: 0.99 minutes (60 seconds)
+  Log file: logs/stage5_training_1765614235.log
+
+  Source: python
+  Duration: 916.03 minutes (54962 seconds)
+  Log file: logs/stage5_training_1765670546.log
+
+  Average: 229.61 minutes
+
+Model: xgboost_pretrained_inception
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 13.70 minutes (822 seconds)
+  Log file: logs/stage5_training_1765609969.log
+
+  Source: python
+  Duration: 1.10 minutes (66 seconds)
+  Log file: logs/stage5_training_1765615229.log
+
+  Source: python
+  Duration: 1.03 minutes (62 seconds)
+  Log file: logs/stage5_training_1765613968.log
+
+  Source: python
+  Duration: 0.35 minutes (21 seconds)
+  Log file: logs/stage5_training_1765616809.log
+
+  Source: python
+  Duration: 910.13 minutes (54608 seconds)
+  Log file: logs/stage5_training_1765670381.log
+
+  Average: 185.26 minutes
+
+Model: xgboost_r2plus1d
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 2.01 minutes (121 seconds)
+  Log file: logs/stage5_training_1765614468.log
+
+  Source: python
+  Duration: 0.35 minutes (21 seconds)
+  Log file: logs/stage5_training_1765617234.log
+
+  Source: python
+  Duration: 1026.76 minutes (61605 seconds)
+  Log file: logs/stage5_training_1765670491.log
+
+  Average: 343.04 minutes
+
+Model: xgboost_vit_gru
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 0.93 minutes (56 seconds)
+  Log file: logs/stage5_training_1765725198.log
+
+  Source: python
+  Duration: 1214.73 minutes (72884 seconds)
+  Log file: logs/stage5_training_1765736928.log
+
+  Average: 607.83 minutes
+
+Model: xgboost_vit_transformer
+--------------------------------------------------------------------------------
+  Source: python
+  Duration: 0.82 minutes (49 seconds)
+  Log file: logs/stage5_training_1765725424.log
+
+  Average: 0.82 minutes

@@ -1,0 +1,253 @@
+# Stage 5 Models: Quick Reference Guide
+
+## Overview
+
+This guide provides quick access to all Stage 5 model information, connections, and analysis tools.
+
+## Documentation
+
+### Comprehensive Analysis
+**File**: `docs/STAGE5_COMPREHENSIVE_ANALYSIS.md`
+
+Complete end-to-end analysis covering:
+- All 21 models (5a-5u)
+- SLURM job structure
+- Python training pipeline
+- Metrics & tracking (ExperimentTracker, MLflow)
+- DuckDB analytics
+- Airflow orchestration
+- Plots & visualizations
+- Time logs & performance
+- Data flow & connections
+
+## Analysis Tools
+
+### Metrics Analysis Script
+**File**: `src/scripts/analyze_stage5_metrics.py`
+
+**Usage**:
+```bash
+# Analyze all models
+python src/scripts/analyze_stage5_metrics.py
+
+# Custom output directory
+python src/scripts/analyze_stage5_metrics.py --output-dir data/custom_analysis
+```
+
+**Outputs**:
+- `analysis_results.json`: Complete analysis data
+- `analysis_report.txt`: Text summary report
+- `metrics_comparison.png`: Model metrics comparison plot
+- `time_analysis.png`: Training time analysis plot
+- `stage5_metrics.parquet`: Metrics for DuckDB
+- `stage5_times.parquet`: Time logs for DuckDB
+
+## Model Status
+
+### ✅ Complete Models (10)
+- logistic_regression (5a)
+- svm (5b)
+- pretrained_inception (5d)
+- xgboost_pretrained_inception (5f)
+- xgboost_i3d (5g)
+- xgboost_r2plus1d (5h)
+- xgboost_vit_gru (5i)
+- xgboost_vit_transformer (5j)
+- x3d (5q)
+- slowfast (5r)
+
+### ⚠️ Partial Models (6)
+- naive_cnn (5c): Only fold_1
+- variable_ar_cnn (5e): No folds
+- vit_gru (5k): No folds
+- vit_transformer (5l): No folds
+- i3d (5o): No folds
+- r2plus1d (5p): No folds
+
+### ❌ Missing Models (5)
+- timesformer (5m)
+- vivit (5n)
+- slowfast_attention (5s)
+- slowfast_multiscale (5t)
+- two_stream (5u)
+
+## Key Locations
+
+### Model Outputs
+```
+data/stage5/
+  {model_type}/
+    fold_1/          # Fold 1 results
+    fold_2/          # Fold 2 results
+    ...
+    fold_5/          # Fold 5 results
+    best_model/      # Best performing fold
+    plots/           # Generated plots
+    metrics.json     # Aggregated metrics
+```
+
+### Log Files
+```
+logs/
+  stage5/
+    stage5a-{JOB_ID}.out    # SLURM stdout
+    stage5a-{JOB_ID}.err    # SLURM stderr
+    stage5a_{JOB_ID}.log    # Training log
+  stage5_training_{timestamp}.log  # Python training log
+```
+
+### MLflow Runs
+```
+mlruns/
+  {experiment_id}/
+    {run_id}/
+      artifacts/     # Model artifacts
+      metrics/       # Metrics
+      params/         # Hyperparameters
+      tags/          # Tags (model_type, fold, etc.)
+```
+
+## Quick Commands
+
+### Check Model Status
+```bash
+# List all models
+ls -d data/stage5/*/
+
+# Check specific model
+ls -la data/stage5/logistic_regression/
+
+# Count folds
+find data/stage5/logistic_regression -type d -name "fold_*" | wc -l
+```
+
+### Extract Time Logs
+```bash
+# From SLURM logs
+grep "Execution time" logs/stage5/stage5*.out
+
+# From Python logs
+grep "Execution time" logs/stage5_training_*.log
+```
+
+### Generate Plots
+```bash
+# All models
+python generate_plots_from_trained_models.py
+
+# Specific model
+python generate_plots_from_trained_models.py --model-type logistic_regression
+```
+
+### Access MLflow UI
+```bash
+mlflow ui --port 5000
+# Open http://localhost:5000
+```
+
+### DuckDB Analytics
+```python
+from lib.utils.duckdb_analytics import DuckDBAnalytics
+
+analytics = DuckDBAnalytics()
+analytics.register_parquet('metrics', 'data/stage5_analysis/stage5_metrics.parquet')
+
+# Query
+result = analytics.query("""
+    SELECT 
+        model_type,
+        AVG(mean_val_acc) as avg_acc,
+        AVG(mean_val_f1) as avg_f1
+    FROM metrics
+    GROUP BY model_type
+    ORDER BY avg_acc DESC
+""")
+```
+
+## Integration Points
+
+### SLURM → Python
+- Environment variables passed to training script
+- Log files in `logs/stage5/`
+
+### Python → Training Pipeline
+- Function: `stage5_train_models()` in `lib/training/pipeline.py`
+- Entry point: `src/scripts/run_stage5_training.py`
+
+### Training Pipeline → ExperimentTracker
+- Metrics logged to `metrics.jsonl`
+- Location: `data/stage5/{model_type}/fold_{N}/metrics.jsonl`
+
+### Training Pipeline → MLflow
+- Metrics and artifacts logged to `mlruns/`
+- Access via MLflow UI
+
+### Output Files → DuckDB
+- Metrics files: `data/stage5/{model_type}/metrics.json`
+- Can be registered for SQL queries
+
+### Output Files → Plot Generation
+- Models loaded from `fold_{N}/` directories
+- Plots saved to `plots/` directories
+
+### Airflow → All Stages
+- DAG: `airflow/dags/fvc_pipeline_dag.py`
+- Stage 5 task: `stage5_training()`
+
+## Metrics Available
+
+### Per-Fold Metrics
+- `val_loss`: Validation loss
+- `val_acc`: Validation accuracy
+- `val_f1`: Validation F1 score
+- `val_precision`: Validation precision
+- `val_recall`: Validation recall
+- Per-class metrics: `val_f1_class0`, `val_precision_class0`, etc.
+
+### Aggregated Metrics
+- `mean_val_acc`: Mean validation accuracy across folds
+- `std_val_acc`: Standard deviation of validation accuracy
+- Same for F1, precision, recall
+- `best_fold`: Best performing fold number
+
+### Time Metrics
+- Training duration (seconds, minutes)
+- Per-fold training time
+- Feature extraction time (for XGBoost models)
+
+## Next Steps
+
+1. **Run Analysis**: Execute `analyze_stage5_metrics.py` to get comprehensive report
+2. **Generate Missing Plots**: Run `generate_plots_from_trained_models.py` for models without plots
+3. **Complete Partial Models**: Train remaining folds for partial models
+4. **Query Metrics**: Use DuckDB to query and compare metrics
+5. **View in MLflow**: Open MLflow UI to explore experiments
+6. **Extract Time Logs**: Parse SLURM and Python logs for performance analysis
+
+## Troubleshooting
+
+### Missing Metrics
+- Check if model training completed successfully
+- Verify `metrics.json` exists in model directory
+- Check SLURM logs for errors
+
+### Missing Plots
+- Run `generate_plots_from_trained_models.py`
+- Ensure models are trained and saved
+- Check for `metrics.jsonl` files in fold directories
+
+### Missing Time Logs
+- Check SLURM output files: `logs/stage5/stage5*.out`
+- Check Python training logs: `logs/stage5_training_*.log`
+- Use `analyze_stage5_metrics.py` to extract times
+
+### MLflow Not Working
+- Verify MLflow is installed: `pip install mlflow`
+- Check `mlruns/` directory exists
+- Ensure `use_mlflow=True` in training script
+
+### DuckDB Queries Failing
+- Verify metrics files exist
+- Check file format (JSON/Parquet)
+- Use `analyze_stage5_metrics.py` to export Parquet files
+
