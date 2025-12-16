@@ -514,6 +514,26 @@ def _train_xgboost_model_fold(
         # Save model
         model.save(str(fold_output_dir))
         logger.info(f"Saved XGBoost model to {fold_output_dir}")
+        
+        # Generate plots for this fold
+        try:
+            from .visualization import plot_fold_metrics
+            # Extract positive class probabilities for plotting
+            if val_probs.ndim == 2 and val_probs.shape[1] == 2:
+                y_proba_pos = val_probs[:, 1]
+            else:
+                y_proba_pos = val_probs.flatten() if val_probs.ndim > 1 else val_probs
+            
+            plot_fold_metrics(
+                y_true=val_y,
+                y_pred=val_preds,
+                y_probs=val_probs,
+                fold_output_dir=fold_output_dir,
+                fold_num=fold_idx + 1,
+                model_type=model_type
+            )
+        except Exception as e:
+            logger.warning(f"Failed to generate plots for XGBoost fold {fold_idx + 1}: {e}", exc_info=True)
     
     except Exception as e:
         logger.error(f"Error training XGBoost fold {fold_idx + 1}: {e}", exc_info=True)
@@ -913,7 +933,12 @@ def _train_pytorch_model_fold(
                 else:
                     torch.cuda.empty_cache()
             
-            val_metrics = evaluate(model, val_loader, device=str(device), hyper_aggressive_gc=is_hyper_aggressive)
+            # Get metrics with probabilities for plotting
+            val_metrics = evaluate(
+                model, val_loader, device=str(device), 
+                hyper_aggressive_gc=is_hyper_aggressive,
+                return_probs=True  # Return probabilities for plotting
+            )
             training_successful = True
             
             if device.type == "cuda" and is_hyper_aggressive:
@@ -1081,6 +1106,26 @@ def _train_pytorch_model_fold(
             mlflow_tracker.end_run()
         except (RuntimeError, AttributeError, ValueError) as cleanup_error:
             logger.warning(f"Error ending MLflow run: {cleanup_error}")
+    
+    # Generate plots for this fold
+    try:
+        from .visualization import plot_fold_metrics
+        if "probs" in val_metrics and "preds" in val_metrics and "labels" in val_metrics:
+            # Extract predictions and probabilities from val_metrics (already concatenated)
+            val_probs = val_metrics["probs"]
+            val_preds = val_metrics["preds"]
+            val_y = val_metrics["labels"]
+            
+            plot_fold_metrics(
+                y_true=val_y,
+                y_pred=val_preds,
+                y_probs=val_probs,
+                fold_output_dir=fold_output_dir,
+                fold_num=fold_idx + 1,
+                model_type=model_type
+            )
+    except Exception as e:
+        logger.warning(f"Failed to generate plots for PyTorch fold {fold_idx + 1}: {e}", exc_info=True)
     
     cleanup_model_and_memory(model=model, device=device, clear_cuda=device.type == "cuda")
     aggressive_gc(clear_cuda=device.type == "cuda")
@@ -1276,6 +1321,26 @@ def _train_baseline_model_fold(
         # Save model
         model.save(str(fold_output_dir))
         logger.info(f"Saved baseline model to {fold_output_dir}")
+        
+        # Generate plots for this fold
+        try:
+            from .visualization import plot_fold_metrics
+            # Extract positive class probabilities for plotting
+            if val_probs.ndim == 2 and val_probs.shape[1] == 2:
+                y_proba_pos = val_probs[:, 1]
+            else:
+                y_proba_pos = val_probs.flatten() if val_probs.ndim > 1 else val_probs
+            
+            plot_fold_metrics(
+                y_true=val_y,
+                y_pred=val_preds,
+                y_probs=val_probs,
+                fold_output_dir=fold_output_dir,
+                fold_num=fold_idx + 1,
+                model_type=model_type
+            )
+        except Exception as e:
+            logger.warning(f"Failed to generate plots for baseline fold {fold_idx + 1}: {e}", exc_info=True)
         
         # Log final validation metrics to metrics.jsonl
         if tracker is not None:
@@ -2206,51 +2271,135 @@ def stage5_train_models(
         
         # Aggregate results (filter out NaN values) - use fold_results from final training
         if fold_results:
-            valid_losses = [
-                r.get("val_loss") for r in fold_results
-                if "val_loss" in r and isinstance(r.get("val_loss"), (int, float))
-                and not (isinstance(r.get("val_loss"), float)
-                         and r.get("val_loss") != r.get("val_loss"))
-            ]
-            valid_accs = [
-                r.get("val_acc") for r in fold_results
-                if "val_acc" in r and isinstance(r.get("val_acc"), (int, float))
-                and not (isinstance(r.get("val_acc"), float)
-                         and r.get("val_acc") != r.get("val_acc"))
-            ]
-            valid_f1s = [
-                r.get("val_f1") for r in fold_results
-                if "val_f1" in r and isinstance(r.get("val_f1"), (int, float))
-                and not (isinstance(r.get("val_f1"), float)
-                         and r.get("val_f1") != r.get("val_f1"))
-            ]
+            def get_valid_values(key: str):
+                """Extract valid (non-NaN) values for a metric key."""
+                return [
+                    r.get(key) for r in fold_results
+                    if key in r and isinstance(r.get(key), (int, float))
+                    and not (isinstance(r.get(key), float)
+                             and r.get(key) != r.get(key))  # Check for NaN
+                ]
             
-            avg_val_loss = (
-                sum(valid_losses) / len(valid_losses)
-                if valid_losses else float('nan')
-            )
-            avg_val_acc = (
-                sum(valid_accs) / len(valid_accs)
-                if valid_accs else float('nan')
-            )
-            avg_val_f1 = (
-                sum(valid_f1s) / len(valid_f1s)
-                if valid_f1s else float('nan')
-            )
+            def compute_mean_std(values):
+                """Compute mean and std for a list of values."""
+                if not values:
+                    return float('nan'), float('nan')
+                mean_val = sum(values) / len(values)
+                if len(values) > 1:
+                    std_val = np.std(values)
+                else:
+                    std_val = 0.0
+                return mean_val, std_val
+            
+            # Aggregate all metrics
+            valid_losses = get_valid_values("val_loss")
+            valid_accs = get_valid_values("val_acc")
+            valid_f1s = get_valid_values("val_f1")
+            valid_precisions = get_valid_values("val_precision")
+            valid_recalls = get_valid_values("val_recall")
+            valid_f1_class0 = get_valid_values("val_f1_class0")
+            valid_precision_class0 = get_valid_values("val_precision_class0")
+            valid_recall_class0 = get_valid_values("val_recall_class0")
+            valid_f1_class1 = get_valid_values("val_f1_class1")
+            valid_precision_class1 = get_valid_values("val_precision_class1")
+            valid_recall_class1 = get_valid_values("val_recall_class1")
+            
+            avg_val_loss, std_val_loss = compute_mean_std(valid_losses)
+            avg_val_acc, std_val_acc = compute_mean_std(valid_accs)
+            avg_val_f1, std_val_f1 = compute_mean_std(valid_f1s)
+            avg_val_precision, std_val_precision = compute_mean_std(valid_precisions)
+            avg_val_recall, std_val_recall = compute_mean_std(valid_recalls)
+            avg_val_f1_class0, std_val_f1_class0 = compute_mean_std(valid_f1_class0)
+            avg_val_precision_class0, std_val_precision_class0 = compute_mean_std(valid_precision_class0)
+            avg_val_recall_class0, std_val_recall_class0 = compute_mean_std(valid_recall_class0)
+            avg_val_f1_class1, std_val_f1_class1 = compute_mean_std(valid_f1_class1)
+            avg_val_precision_class1, std_val_precision_class1 = compute_mean_std(valid_precision_class1)
+            avg_val_recall_class1, std_val_recall_class1 = compute_mean_std(valid_recall_class1)
             
             results[model_type] = {
                 "fold_results": fold_results,
-                "avg_val_loss": avg_val_loss,
-                "avg_val_acc": avg_val_acc,
-                "avg_val_f1": avg_val_f1,
+                # Aggregated overall metrics
+                "avg_val_loss": float(avg_val_loss),
+                "std_val_loss": float(std_val_loss),
+                "avg_val_acc": float(avg_val_acc),
+                "std_val_acc": float(std_val_acc),
+                "avg_val_f1": float(avg_val_f1),
+                "std_val_f1": float(std_val_f1),
+                "avg_val_precision": float(avg_val_precision),
+                "std_val_precision": float(std_val_precision),
+                "avg_val_recall": float(avg_val_recall),
+                "std_val_recall": float(std_val_recall),
+                # Aggregated per-class metrics
+                "avg_val_f1_class0": float(avg_val_f1_class0),
+                "std_val_f1_class0": float(std_val_f1_class0),
+                "avg_val_precision_class0": float(avg_val_precision_class0),
+                "std_val_precision_class0": float(std_val_precision_class0),
+                "avg_val_recall_class0": float(avg_val_recall_class0),
+                "std_val_recall_class0": float(std_val_recall_class0),
+                "avg_val_f1_class1": float(avg_val_f1_class1),
+                "std_val_f1_class1": float(std_val_f1_class1),
+                "avg_val_precision_class1": float(avg_val_precision_class1),
+                "std_val_precision_class1": float(std_val_precision_class1),
+                "avg_val_recall_class1": float(avg_val_recall_class1),
+                "std_val_recall_class1": float(std_val_recall_class1),
                 "best_hyperparameters": best_params,
             }
             
             logger.info(
-                "\n%s - Avg Val Loss: %.4f, Avg Val Acc: %.4f, Avg Val F1: %.4f",
-                model_type, avg_val_loss, avg_val_acc, avg_val_f1
+                "\n%s - Avg Val Loss: %.4f ± %.4f, Avg Val Acc: %.4f ± %.4f, Avg Val F1: %.4f ± %.4f",
+                model_type, avg_val_loss, std_val_loss, avg_val_acc, std_val_acc, avg_val_f1, std_val_f1
+            )
+            logger.info(
+                "  Avg Val Precision: %.4f ± %.4f, Avg Val Recall: %.4f ± %.4f",
+                avg_val_precision, std_val_precision, avg_val_recall, std_val_recall
+            )
+            logger.info(
+                "  Class 0 - F1: %.4f ± %.4f, Precision: %.4f ± %.4f, Recall: %.4f ± %.4f",
+                avg_val_f1_class0, std_val_f1_class0, avg_val_precision_class0, std_val_precision_class0,
+                avg_val_recall_class0, std_val_recall_class0
+            )
+            logger.info(
+                "  Class 1 - F1: %.4f ± %.4f, Precision: %.4f ± %.4f, Recall: %.4f ± %.4f",
+                avg_val_f1_class1, std_val_f1_class1, avg_val_precision_class1, std_val_precision_class1,
+                avg_val_recall_class1, std_val_recall_class1
             )
             _flush_logs()
+            
+            # Save aggregated metrics to metrics.json
+            # CRITICAL: Ensure all required metrics are present before saving
+            # This is especially important for XGBoost models (5f-5j) and PyTorch models (5k-5r)
+            try:
+                import json
+                metrics_file = model_output_dir / "metrics.json"
+                
+                # Validate that all expected metrics are present
+                expected_metrics = [
+                    "avg_val_loss", "std_val_loss",
+                    "avg_val_acc", "std_val_acc",
+                    "avg_val_f1", "std_val_f1",
+                    "avg_val_precision", "std_val_precision",
+                    "avg_val_recall", "std_val_recall",
+                    "avg_val_f1_class0", "std_val_f1_class0",
+                    "avg_val_precision_class0", "std_val_precision_class0",
+                    "avg_val_recall_class0", "std_val_recall_class0",
+                    "avg_val_f1_class1", "std_val_f1_class1",
+                    "avg_val_precision_class1", "std_val_precision_class1",
+                    "avg_val_recall_class1", "std_val_recall_class1",
+                ]
+                
+                missing_metrics = [m for m in expected_metrics if m not in results[model_type]]
+                if missing_metrics:
+                    logger.warning(
+                        f"Missing metrics for {model_type}: {missing_metrics}. "
+                        f"This may indicate an issue with metric computation."
+                    )
+                
+                with open(metrics_file, "w") as f:
+                    json.dump(results[model_type], f, indent=2, default=str)
+                logger.info(f"Saved aggregated metrics to {metrics_file} (model: {model_type})")
+            except Exception as e:
+                logger.error(f"Failed to save metrics.json for {model_type}: {e}", exc_info=True)
+                # Don't raise - continue with other models
             
             # Generate visualization plots
             try:

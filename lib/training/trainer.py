@@ -677,6 +677,7 @@ def evaluate(
     loader: DataLoader,
     device: str,
     hyper_aggressive_gc: bool = False,  # Enable hyper-aggressive GC for memory-intensive models (X3D, SlowFast)
+    return_probs: bool = False,  # If True, also return probabilities for plotting
 ) -> Dict[str, Any]:
     """
     Evaluate model on validation/test set.
@@ -706,6 +707,7 @@ def evaluate(
     # Collect all predictions and labels for metric computation
     all_preds = []
     all_labels = []
+    all_probs = [] if return_probs else None  # Collect probabilities if needed
     
     criterion: Optional[nn.Module] = None
     first_batch = True
@@ -784,12 +786,20 @@ def evaluate(
                 logits = logits.squeeze(-1)
             targets = labels.float()
             loss = criterion(logits, targets)
-            preds = (logits.sigmoid() >= 0.5).long()
+            probs = logits.sigmoid()
+            preds = (probs >= 0.5).long()
+            # Convert to (N, 2) format for consistency
+            if return_probs:
+                probs_2d = torch.stack([1 - probs, probs], dim=1)
+                all_probs.append(probs_2d.cpu().numpy())
         else:
             if logits.ndim == 1:
                 logits = logits.unsqueeze(-1)
             loss = criterion(logits, labels)
             preds = logits.argmax(dim=1)
+            if return_probs:
+                probs = torch.softmax(logits, dim=1)
+                all_probs.append(probs.cpu().numpy())
         
         # Collect predictions and labels
         all_preds.append(preds.cpu().numpy())
@@ -811,17 +821,17 @@ def evaluate(
     acc = total_correct / max(1, total_samples)
     
     # Compute comprehensive metrics
-    all_preds = np.concatenate(all_preds)
-    all_labels = np.concatenate(all_labels)
+    all_preds_concat = np.concatenate(all_preds)
+    all_labels_concat = np.concatenate(all_labels)
     
     # Overall metrics (binary classification)
-    precision = float(precision_score(all_labels, all_preds, average='binary', zero_division=0))
-    recall = float(recall_score(all_labels, all_preds, average='binary', zero_division=0))
-    f1 = float(f1_score(all_labels, all_preds, average='binary', zero_division=0))
+    precision = float(precision_score(all_labels_concat, all_preds_concat, average='binary', zero_division=0))
+    recall = float(recall_score(all_labels_concat, all_preds_concat, average='binary', zero_division=0))
+    f1 = float(f1_score(all_labels_concat, all_preds_concat, average='binary', zero_division=0))
     
     # Per-class metrics
     precision_per_class, recall_per_class, f1_per_class, support = precision_recall_fscore_support(
-        all_labels, all_preds, average=None, zero_division=0
+        all_labels_concat, all_preds_concat, average=None, zero_division=0
     )
     
     per_class_metrics = {}
@@ -836,7 +846,7 @@ def evaluate(
     # Final aggressive GC
     aggressive_gc(clear_cuda=device.startswith("cuda"))
     
-    return {
+    result = {
         "loss": avg_loss,
         "accuracy": acc,
         "precision": precision,
@@ -844,6 +854,14 @@ def evaluate(
         "f1": f1,
         "per_class": per_class_metrics
     }
+    
+    # Add probabilities if requested
+    if return_probs and all_probs:
+        result["probs"] = np.vstack(all_probs)
+        result["preds"] = all_preds_concat
+        result["labels"] = all_labels_concat
+    
+    return result
 
 
 def fit(

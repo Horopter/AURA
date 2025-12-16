@@ -22,7 +22,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import StratifiedKFold, ParameterGrid
 from sklearn.metrics import (
     f1_score, roc_auc_score, average_precision_score,
-    roc_curve, precision_recall_curve, confusion_matrix, accuracy_score
+    roc_curve, precision_recall_curve, confusion_matrix, accuracy_score,
+    precision_score, recall_score, precision_recall_fscore_support
 )
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for headless environments
@@ -462,6 +463,9 @@ def train_sklearn_logreg(
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     cv_scores = []
     cv_aucs = []
+    cv_precisions = []
+    cv_recalls = []
+    cv_fold_results = []  # Store individual fold results
     
     for fold_idx, (train_idx_cv, val_idx_cv) in enumerate(cv.split(X_trainval, y_trainval)):
         logger.info(f"CV fold {fold_idx + 1}/{n_splits}")
@@ -485,18 +489,52 @@ def train_sklearn_logreg(
         val_probs_cv = val_probs_cv_full[:, 1]
         val_preds_cv = (val_probs_cv > 0.5).astype(int)
         
+        # Compute comprehensive metrics for this fold
         cv_f1 = f1_score(y_val_cv, val_preds_cv)
         cv_auc = roc_auc_score(y_val_cv, val_probs_cv)
+        cv_precision = precision_score(y_val_cv, val_preds_cv, average='binary', zero_division=0)
+        cv_recall = recall_score(y_val_cv, val_preds_cv, average='binary', zero_division=0)
+        cv_acc = accuracy_score(y_val_cv, val_preds_cv)
+        
+        # Per-class metrics
+        precision_per_class, recall_per_class, f1_per_class, support = precision_recall_fscore_support(
+            y_val_cv, val_preds_cv, average=None, zero_division=0
+        )
         
         cv_scores.append(cv_f1)
         cv_aucs.append(cv_auc)
+        cv_precisions.append(cv_precision)
+        cv_recalls.append(cv_recall)
+        
+        # Store fold results
+        cv_fold_results.append({
+            "fold": fold_idx + 1,
+            "f1": float(cv_f1),
+            "auc": float(cv_auc),
+            "precision": float(cv_precision),
+            "recall": float(cv_recall),
+            "accuracy": float(cv_acc),
+            "precision_class0": float(precision_per_class[0]) if len(precision_per_class) > 0 else 0.0,
+            "recall_class0": float(recall_per_class[0]) if len(recall_per_class) > 0 else 0.0,
+            "f1_class0": float(f1_per_class[0]) if len(f1_per_class) > 0 else 0.0,
+            "precision_class1": float(precision_per_class[1]) if len(precision_per_class) > 1 else 0.0,
+            "recall_class1": float(recall_per_class[1]) if len(recall_per_class) > 1 else 0.0,
+            "f1_class1": float(f1_per_class[1]) if len(f1_per_class) > 1 else 0.0,
+        })
     
     cv_mean_f1 = np.mean(cv_scores)
     cv_std_f1 = np.std(cv_scores)
     cv_mean_auc = np.mean(cv_aucs)
+    cv_std_auc = np.std(cv_aucs)
+    cv_mean_precision = np.mean(cv_precisions)
+    cv_std_precision = np.std(cv_precisions)
+    cv_mean_recall = np.mean(cv_recalls)
+    cv_std_recall = np.std(cv_recalls)
     
     logger.info(f"CV F1: {cv_mean_f1:.4f} ± {cv_std_f1:.4f}")
-    logger.info(f"CV AUC: {cv_mean_auc:.4f}")
+    logger.info(f"CV AUC: {cv_mean_auc:.4f} ± {cv_std_auc:.4f}")
+    logger.info(f"CV Precision: {cv_mean_precision:.4f} ± {cv_std_precision:.4f}")
+    logger.info(f"CV Recall: {cv_mean_recall:.4f} ± {cv_std_recall:.4f}")
     
     # Train final model on train+val (already scaled)
     logger.info("Training final model on full training+validation set...")
@@ -518,11 +556,24 @@ def train_sklearn_logreg(
     test_auc = roc_auc_score(y_test, test_probs)
     test_ap = average_precision_score(y_test, test_probs)
     test_acc = accuracy_score(y_test, test_preds)
+    test_precision = precision_score(y_test, test_preds, average='binary', zero_division=0)
+    test_recall = recall_score(y_test, test_preds, average='binary', zero_division=0)
+    test_cm = confusion_matrix(y_test, test_preds)
+    
+    # Per-class metrics for test set
+    test_precision_per_class, test_recall_per_class, test_f1_per_class, test_support = precision_recall_fscore_support(
+        y_test, test_preds, average=None, zero_division=0
+    )
     
     logger.info(f"Test F1: {test_f1:.4f}")
     logger.info(f"Test AUC: {test_auc:.4f}")
     logger.info(f"Test AP: {test_ap:.4f}")
     logger.info(f"Test Acc: {test_acc:.4f}")
+    logger.info(f"Test Precision: {test_precision:.4f}")
+    logger.info(f"Test Recall: {test_recall:.4f}")
+    logger.info(f"Test Confusion Matrix:\n{test_cm}")
+    logger.info(f"Test Class 0 - Precision: {test_precision_per_class[0]:.4f}, Recall: {test_recall_per_class[0]:.4f}, F1: {test_f1_per_class[0]:.4f}")
+    logger.info(f"Test Class 1 - Precision: {test_precision_per_class[1]:.4f}, Recall: {test_recall_per_class[1]:.4f}, F1: {test_f1_per_class[1]:.4f}")
     
     # Save model and results
     try:
@@ -550,13 +601,32 @@ def train_sklearn_logreg(
     results = {
         "best_params": make_json_serializable(best_params),
         "best_val_f1": float(best_score),
+        # CV aggregated metrics
         "cv_val_f1": float(cv_mean_f1),
         "cv_val_f1_std": float(cv_std_f1),
         "cv_val_auc": float(cv_mean_auc),
+        "cv_val_auc_std": float(cv_std_auc),
+        "cv_val_precision": float(cv_mean_precision),
+        "cv_val_precision_std": float(cv_std_precision),
+        "cv_val_recall": float(cv_mean_recall),
+        "cv_val_recall_std": float(cv_std_recall),
+        # CV fold results
+        "cv_fold_results": make_json_serializable(cv_fold_results),
+        # Test set metrics
         "test_f1": float(test_f1),
         "test_auc": float(test_auc),
         "test_ap": float(test_ap),
         "test_acc": float(test_acc),
+        "test_precision": float(test_precision),
+        "test_recall": float(test_recall),
+        "test_confusion_matrix": make_json_serializable(test_cm),
+        # Test set per-class metrics
+        "test_precision_class0": float(test_precision_per_class[0]) if len(test_precision_per_class) > 0 else 0.0,
+        "test_recall_class0": float(test_recall_per_class[0]) if len(test_recall_per_class) > 0 else 0.0,
+        "test_f1_class0": float(test_f1_per_class[0]) if len(test_f1_per_class) > 0 else 0.0,
+        "test_precision_class1": float(test_precision_per_class[1]) if len(test_precision_per_class) > 1 else 0.0,
+        "test_recall_class1": float(test_recall_per_class[1]) if len(test_recall_per_class) > 1 else 0.0,
+        "test_f1_class1": float(test_f1_per_class[1]) if len(test_f1_per_class) > 1 else 0.0,
         "grid_results": make_json_serializable(grid_results)
     }
     

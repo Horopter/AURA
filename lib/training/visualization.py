@@ -378,3 +378,107 @@ def generate_all_plots(
     
     logger.info(f"Generated all plots for {model_type} in {output_dir}")
 
+
+def plot_fold_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    y_probs: np.ndarray,
+    fold_output_dir: Path,
+    fold_num: int,
+    model_type: str,
+    class_names: Optional[List[str]] = None
+) -> None:
+    """
+    Generate plots for a single fold: ROC curve, PR curve, and confusion matrix.
+    
+    Args:
+        y_true: True labels (1D array)
+        y_pred: Predicted labels (1D array)
+        y_probs: Predicted probabilities (2D array with shape (n_samples, n_classes) or 1D for binary)
+        fold_output_dir: Directory to save plots
+        fold_num: Fold number
+        model_type: Model type identifier
+        class_names: List of class names (default: ["Real", "Fake"])
+    """
+    if class_names is None:
+        class_names = ["Real", "Fake"]
+    
+    fold_output_dir = Path(fold_output_dir)
+    fold_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        # Extract positive class probabilities for binary classification
+        if y_probs.ndim == 2:
+            if y_probs.shape[1] == 2:
+                y_proba_pos = y_probs[:, 1]  # Probability of positive class
+            else:
+                # Multi-class: use max probability class
+                y_proba_pos = np.max(y_probs, axis=1)
+        else:
+            # Already 1D
+            y_proba_pos = y_probs
+        
+        # Combined ROC and PR curves plot
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        
+        # ROC Curve
+        fpr, tpr, _ = roc_curve(y_true, y_proba_pos)
+        roc_auc = auc(fpr, tpr)
+        ax1.plot(fpr, tpr, color='darkorange', lw=2, 
+                label=f'ROC curve (AUC = {roc_auc:.4f})')
+        ax1.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Random')
+        ax1.set_xlim([0.0, 1.0])
+        ax1.set_ylim([0.0, 1.05])
+        ax1.set_xlabel('False Positive Rate', fontsize=12)
+        ax1.set_ylabel('True Positive Rate', fontsize=12)
+        ax1.set_title('ROC Curve', fontsize=14, fontweight='bold')
+        ax1.legend(loc="lower right")
+        ax1.grid(True, alpha=0.3)
+        
+        # Precision-Recall Curve
+        precision, recall, _ = precision_recall_curve(y_true, y_proba_pos)
+        avg_precision = average_precision_score(y_true, y_proba_pos)
+        ax2.plot(recall, precision, color='darkorange', lw=2,
+                label=f'PR curve (AP = {avg_precision:.4f})')
+        ax2.set_xlim([0.0, 1.0])
+        ax2.set_ylim([0.0, 1.05])
+        ax2.set_xlabel('Recall', fontsize=12)
+        ax2.set_ylabel('Precision', fontsize=12)
+        ax2.set_title('Precision-Recall Curve', fontsize=14, fontweight='bold')
+        ax2.legend(loc="lower left")
+        ax2.grid(True, alpha=0.3)
+        
+        plt.suptitle(f'{model_type} - Fold {fold_num} - ROC and PR Curves', 
+                     fontsize=16, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(fold_output_dir / "roc_pr_curves.png", dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Confusion Matrix
+        cm = confusion_matrix(y_true, y_pred)
+        fig, ax = plt.subplots(figsize=(8, 6))
+        sns.heatmap(
+            cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=class_names,
+            yticklabels=class_names,
+            ax=ax
+        )
+        ax.set_xlabel('Predicted', fontsize=12)
+        ax.set_ylabel('Actual', fontsize=12)
+        ax.set_title(f'{model_type} - Fold {fold_num} - Confusion Matrix', 
+                     fontsize=14, fontweight='bold')
+        
+        # Add accuracy text
+        accuracy = np.trace(cm) / np.sum(cm) if np.sum(cm) > 0 else 0.0
+        ax.text(0.5, -0.15, f'Accuracy: {accuracy:.4f}', 
+                transform=ax.transAxes, ha='center', fontsize=11)
+        
+        plt.tight_layout()
+        plt.savefig(fold_output_dir / "confusion_matrix.png", dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        logger.info(f"Generated fold {fold_num} plots: ROC/PR curves and confusion matrix")
+        
+    except Exception as e:
+        logger.warning(f"Failed to generate plots for fold {fold_num}: {e}", exc_info=True)
+
