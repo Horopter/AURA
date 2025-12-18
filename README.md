@@ -134,6 +134,26 @@ See [Paper Figure Generation Guide](docs/PAPER_FIGURE_GENERATION.md) for details
 - [**Notebooks README**](src/notebooks/README.md) - Jupyter notebook collection and usage
 - [**Test README**](test/README.md) - Unit test suite documentation
 
+### Executed Model Analysis Notebooks
+
+The following notebooks contain complete analysis results with training curves, validation metrics, and performance visualizations:
+
+- **[5a: Logistic Regression](src/notebooks/executed/5a_logistic_regression.ipynb)** - Logistic Regression baseline model analysis
+- **[5alpha: Scikit-learn Logistic Regression](src/notebooks/executed/5alpha_sklearn_logreg.ipynb)** - Scikit-learn Logistic Regression analysis
+- **[5b: Support Vector Machine](src/notebooks/executed/5b_svm.ipynb)** - SVM model analysis with fold-wise metrics
+- **[5beta: Gradient Boosting](src/notebooks/executed/5beta_gradient_boosting.ipynb)** - Gradient Boosting (XGBoost, LightGBM, CatBoost) analysis
+- **[5f: XGBoost + Pretrained Inception](src/notebooks/executed/5f_xgboost_pretrained_inception.ipynb)** - XGBoost with Pretrained Inception features
+- **[5g: XGBoost + I3D](src/notebooks/executed/5g_xgboost_i3d.ipynb)** - XGBoost with I3D features
+- **[5h: XGBoost + R(2+1)D](src/notebooks/executed/5h_xgboost_r2plus1d.ipynb)** - XGBoost with R(2+1)D features
+
+Each notebook includes:
+- ✅ Complete training curves (loss, accuracy, F1 score)
+- ✅ Validation metrics across cross-validation folds
+- ✅ MLflow experiment tracking integration
+- ✅ DuckDB analytics queries
+- ✅ ROC and Precision-Recall curves
+- ✅ Comprehensive performance summaries
+
 ## Dependencies
 
 Key dependencies (see `requirements.txt` for full list):
